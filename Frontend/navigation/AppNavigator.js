@@ -1,23 +1,23 @@
 import React from 'react';
 import { NavigationContainer } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
-import useAuth from '../hooks/useAuth';
 import AuthNavigator from './AuthNavigator';
-import HomeScreen from '../screens/Main/HomeScreen';
+import DashboardNavigator from './DashboardNavigator';
+import useAuth from '../hooks/useAuth';
 
 const Stack = createNativeStackNavigator();
 
 export default function AppNavigator() {
-  const { userToken } = useAuth();
+  const { userToken } = useAuth(); // comes from AuthContext
 
   return (
     <NavigationContainer>
       {userToken ? (
-        <Stack.Navigator>
-          <Stack.Screen name="Home" component={HomeScreen} />
-        </Stack.Navigator>
+        <DashboardNavigator />
       ) : (
-        <AuthNavigator />
+        <Stack.Navigator screenOptions={{ headerShown: false }}>
+          <Stack.Screen name="Auth" component={AuthNavigator} />
+        </Stack.Navigator>
       )}
     </NavigationContainer>
   );

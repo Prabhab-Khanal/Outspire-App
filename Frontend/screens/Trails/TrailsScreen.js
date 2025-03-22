@@ -1,10 +1,13 @@
 import React from 'react';
+import everestImg from '../../assets/images/everest.jpeg';
+import annapurnaImg from '../../assets/images/annapurna.jpeg';
+import langtangImg from '../../assets/images/langtang.jpeg';
 import { View, Text, FlatList, Image, StyleSheet, TouchableOpacity } from 'react-native';
 
 const trails = [
-  { id: '1', name: 'Everest Base Camp', location: 'Nepal', image: 'https://source.unsplash.com/600x400/?mountain' },
-  { id: '2', name: 'Annapurna Circuit', location: 'Nepal', image: 'https://source.unsplash.com/600x400/?hiking' },
-  { id: '3', name: 'Langtang Valley', location: 'Nepal', image: 'https://source.unsplash.com/600x400/?trekking' },
+  { id: '1', name: 'Everest Base Camp', location: 'Nepal', image: everestImg },
+  { id: '2', name: 'Annapurna Circuit', location: 'Nepal', image: annapurnaImg },
+  { id: '3', name: 'Langtang Valley', location: 'Nepal', image: langtangImg },
 ];
 
 export default function TrailsScreen({ navigation }) {
@@ -19,7 +22,7 @@ export default function TrailsScreen({ navigation }) {
             onPress={() => navigation.navigate('TrailDetails', { trail: item })}
             style={styles.card}
           >
-            <Image source={{ uri: item.image }} style={styles.image} />
+            <Image source={ item.image } style={styles.image} />
             <Text style={styles.title}>{item.name}</Text>
             <Text style={styles.subtitle}>{item.location}</Text>
           </TouchableOpacity>
