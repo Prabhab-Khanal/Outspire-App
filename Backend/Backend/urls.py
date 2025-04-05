@@ -20,4 +20,5 @@ from django.urls import include, path
 urlpatterns = [
     path('admin/', admin.site.urls),
     path('users/', include('users.urls')),  # Users App (Authentication & Profile)
+    path('trails/',include('trails.urls')), # Trails App (Trails)
 ]

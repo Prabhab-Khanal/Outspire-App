@@ -1,8 +1,8 @@
-import React from 'react';
+import React, { useLayoutEffect } from 'react';
 import everestImg from '../../assets/images/everest.jpeg';
 import annapurnaImg from '../../assets/images/annapurna.jpeg';
 import langtangImg from '../../assets/images/langtang.jpeg';
-import { View, Text, FlatList, Image, StyleSheet, TouchableOpacity } from 'react-native';
+import { View, Text, FlatList, Image, StyleSheet, TouchableOpacity, Button } from 'react-native';
 
 const trails = [
   { id: '1', name: 'Everest Base Camp', location: 'Nepal', image: everestImg },
@@ -11,6 +11,19 @@ const trails = [
 ];
 
 export default function TrailsScreen({ navigation }) {
+
+  useLayoutEffect(() => {
+    navigation.setOptions({
+      headerRight: () => (
+        <Button
+          onPress={() => navigation.navigate('AddTrailScreen')}
+          title="Add"
+          color="#007bff"
+        />
+      ),
+    });
+  }, [navigation]);
+
   return (
     <View style={styles.container}>
       <Text style={styles.header}>Explore Trails</Text>
@@ -22,7 +35,7 @@ export default function TrailsScreen({ navigation }) {
             onPress={() => navigation.navigate('TrailDetails', { trail: item })}
             style={styles.card}
           >
-            <Image source={ item.image } style={styles.image} />
+            <Image source={item.image} style={styles.image} />
             <Text style={styles.title}>{item.name}</Text>
             <Text style={styles.subtitle}>{item.location}</Text>
           </TouchableOpacity>
