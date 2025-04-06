@@ -1,130 +1,95 @@
-from django.shortcuts import render
-
-# Create your views here.
-import json
-from django.contrib.auth import authenticate
 from django.core.cache import cache
-from django.http import JsonResponse
-from django.utils.timezone import now
-import random
 from django.core.mail import send_mail
+from django.http import JsonResponse
 from rest_framework.views import APIView
 from rest_framework.permissions import IsAuthenticated
 from rest_framework_simplejwt.tokens import RefreshToken
-from .models import User
-from .serializers import UserSerializer
+from rest_framework.response import Response
+from rest_framework import status
+import random, json
 
-# OTP Settings
-OTP_EXPIRATION_TIME = 300  # 5 minutes
-MAX_OTP_ATTEMPTS = 5
-BLOCK_DURATION = 600  # 10 minutes block
+from .models import User, UserProfile, UserPreference
+from .serializers import (
+    UserSerializer, RegisterSerializer, LoginSerializer,
+    OTPVerifySerializer, ResetPasswordSerializer,
+    ProfileSerializer, PreferenceSerializer
+)
 
-### 🔹 USER REGISTRATION (With Email OTP Verification) ###
+# OTP settings
+OTP_EXPIRATION_TIME = 300
+
+
+### 🔹 REGISTER USER WITH OTP ###
 class RegisterUserView(APIView):
     def post(self, request):
-        """ Register a new user (Requires OTP Verification) """
-
         data = request.data
-        username = data.get("username")
+        serializer = RegisterSerializer(data=data)
+
         email = data.get("email")
-        password = data.get("password")
+        otp = data.get("otp")
+        otp_key = f"otp_register_{email}"
 
-        if User.objects.filter(email=email).exists():
-            return JsonResponse({"error": "Email already registered"}, status=400)
-
-        # Check OTP Verification
-        otp_cache_key = f"otp_register_{email}"
-        stored_otp = cache.get(otp_cache_key)
-
-        if not stored_otp or stored_otp != data.get("otp"):
+        if not otp or cache.get(otp_key) != otp:
             return JsonResponse({"error": "Invalid or expired OTP"}, status=400)
 
-        # Create User
-        user = User.objects.create_user(
-            username=username,
-            email=email,
-            password=password
-        )
-        user.is_email_verified = True
-        user.save()
+        if serializer.is_valid():
+            user = serializer.save()
+            user.is_email_verified = True
+            user.save()
+            cache.delete(otp_key)
+            return JsonResponse({"success": "User registered successfully"}, status=201)
 
-        cache.delete(otp_cache_key)  # Remove OTP from cache after verification
-        return JsonResponse({"success": "User registered successfully"}, status=201)
+        return JsonResponse(serializer.errors, status=400)
 
 
-### 🔹 LOGIN (Username/Email + Password) ###
+### 🔹 LOGIN ###
 class LoginUserView(APIView):
     def post(self, request):
-        """ User login using username/email + password """
-
         data = request.data
-        username_or_email = data.get("username_or_email")
+        identifier = data.get("username_or_email")
         password = data.get("password")
 
-        # Identify login field (email or username)
-        user = User.objects.filter(
-            email=username_or_email
-        ).first() or User.objects.filter(
-            username=username_or_email
-        ).first()
+        user = User.objects.filter(email=identifier).first() or User.objects.filter(username=identifier).first()
 
         if user and user.check_password(password):
             refresh = RefreshToken.for_user(user)
             return JsonResponse({
                 "access_token": str(refresh.access_token),
-                "refresh_token": str(refresh)
+                "refresh_token": str(refresh),
+                "is_email_verified": user.is_email_verified,
+                "is_profile_complete": user.is_profile_complete,
+                "is_preference_complete": user.is_preference_complete
             })
-        
+
         return JsonResponse({"error": "Invalid credentials"}, status=400)
 
-### 🔹 LOGOUT (Blacklist Refresh Token) ###
+
+### 🔹 LOGOUT ###
 class LogoutUserView(APIView):
     def post(self, request):
-        """ Logout user by blacklisting the refresh token """
-
         try:
-            # Print request body for debugging
             request_data = json.loads(request.body.decode('utf-8'))
-            print("Received Request Data:", request_data)
-
-            refresh_token = request_data.get("refresh_token")
-
-            if not refresh_token:
-                return JsonResponse({"error": "Refresh token is required for logout"}, status=400)
-
-            # Check if refresh token is valid
-            token = RefreshToken(refresh_token)
-
-            # Blacklist the refresh token
+            token = RefreshToken(request_data.get("refresh_token"))
             token.blacklist()
-
-            return JsonResponse({"success": "User logged out successfully"}, status=200)
-
+            return JsonResponse({"success": "Logged out successfully"})
         except Exception as e:
-            print("Logout Error:", str(e))  # Debugging logs
-            return JsonResponse({"error": "Invalid or expired token"}, status=400)
+            return JsonResponse({"error": "Invalid token"}, status=400)
 
 
-### 🔹 GOOGLE LOGIN (OAuth2-Based Authentication) ###
+### 🔹 GOOGLE LOGIN ###
 class GoogleLoginView(APIView):
     def post(self, request):
-        """ Google OAuth2 Login (Requires Google Token) """
-
         data = request.data
         google_id = data.get("google_id")
         email = data.get("email")
         username = data.get("username")
 
         if not google_id or not email:
-            return JsonResponse({"error": "Invalid Google credentials"}, status=400)
+            return JsonResponse({"error": "Missing Google credentials"}, status=400)
 
         user, created = User.objects.get_or_create(
             email=email,
-            defaults={
-                "username": username,
-                "google_id": google_id,
-                "is_email_verified": True,
-            }
+            defaults={"username": username, "google_id": google_id, "is_email_verified": True}
         )
 
         refresh = RefreshToken.for_user(user)
@@ -135,33 +100,22 @@ class GoogleLoginView(APIView):
         })
 
 
-### 🔹 GENERATE OTP (For Registration & Forgot Password) ###
+### 🔹 GENERATE OTP ###
 class GenerateOTPView(APIView):
     def post(self, request):
-        """ Generate OTP for registration or password reset """
-
         email = request.data.get("email")
-        otp_type = request.data.get("otp_type")  # "register" or "reset"
+        otp_type = request.data.get("otp_type")  # register or reset
 
         if otp_type not in ["register", "reset"]:
             return JsonResponse({"error": "Invalid OTP type"}, status=400)
 
-        otp_cache_key = f"otp_{otp_type}_{email}"
-        otp_attempts_key = f"otp_attempts_{otp_type}_{email}"
-        otp_block_key = f"otp_block_{otp_type}_{email}"
-
-        if cache.get(otp_block_key):
-            return JsonResponse({"error": "Too many incorrect attempts. Try again later."}, status=429)
-
         otp = str(random.randint(100000, 999999))
-        cache.set(otp_cache_key, otp, timeout=OTP_EXPIRATION_TIME)
-        cache.set(otp_attempts_key, 0, timeout=OTP_EXPIRATION_TIME)
+        cache.set(f"otp_{otp_type}_{email}", otp, timeout=OTP_EXPIRATION_TIME)
 
-        # Send OTP via Email (Replace with actual email sending logic)
         send_mail(
             subject="Your OTP Code",
-            message=f"Your OTP code for {otp_type} is {otp}",
-            from_email="no-reply@outspire.com",
+            message=f"Your OTP code is: {otp}",
+            from_email="noreply@outspire.com",
             recipient_list=[email],
             fail_silently=False,
         )
@@ -169,70 +123,111 @@ class GenerateOTPView(APIView):
         return JsonResponse({"message": "OTP sent successfully"})
 
 
-### 🔹 VERIFY OTP (For Registration & Forgot Password) ###
+### 🔹 VERIFY OTP ###
 class VerifyOTPView(APIView):
     def post(self, request):
-        """ Verify OTP for registration or password reset """
+        serializer = OTPVerifySerializer(data=request.data)
+        if serializer.is_valid():
+            email = serializer.validated_data['email']
+            otp = serializer.validated_data['otp']
+            otp_type = serializer.validated_data['otp_type']
 
-        email = request.data.get("email")
-        entered_otp = request.data.get("otp")
-        otp_type = request.data.get("otp_type")
-
-        otp_cache_key = f"otp_{otp_type}_{email}"
-        stored_otp = cache.get(otp_cache_key)
-
-        if stored_otp and entered_otp == stored_otp:
-            cache.delete(otp_cache_key)
-            return JsonResponse({"success": f"{otp_type} OTP verified successfully"})
-
+            stored_otp = cache.get(f"otp_{otp_type}_{email}")
+            if stored_otp == otp:
+                return JsonResponse({"success": "OTP verified"})
         return JsonResponse({"error": "Invalid OTP"}, status=400)
 
 
 ### 🔹 RESET PASSWORD ###
 class ResetPasswordView(APIView):
     def post(self, request):
-        """ Reset user password after OTP verification """
-
-        email = request.data.get("email")
-        new_password = request.data.get("password")
-
-        user = User.objects.filter(email=email).first()
-
-        if user:
-            user.set_password(new_password)
-            user.save()
-            return JsonResponse({"success": "Password reset successful"})
-
-        return JsonResponse({"error": "User not found"}, status=400)
+        serializer = ResetPasswordSerializer(data=request.data)
+        if serializer.is_valid():
+            user = User.objects.filter(email=serializer.validated_data['email']).first()
+            if user:
+                user.set_password(serializer.validated_data['password'])
+                user.save()
+                return JsonResponse({"success": "Password reset successful"})
+        return JsonResponse({"error": "User not found or invalid"}, status=400)
 
 
-### 🔹 UPDATE PROFILE (Authenticated Users Only) ###
+### 🔹 CREATE PROFILE ###
+class CreateProfileView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        if hasattr(request.user, 'profile'):
+            return Response({"error": "Profile already exists"}, status=400)
+
+        serializer = ProfileSerializer(data=request.data)
+        if serializer.is_valid():
+            serializer.save(user=request.user)
+            request.user.is_profile_complete = True
+            request.user.save()
+            return Response({"success": "Profile created"})
+        return Response(serializer.errors, status=400)
+
+
+### 🔹 UPDATE PROFILE ###
 class UpdateProfileView(APIView):
     permission_classes = [IsAuthenticated]
 
     def put(self, request):
-        """ Update user profile (Name, Username, Profile Picture) """
+        profile = getattr(request.user, 'profile', None)
+        if not profile:
+            return Response({"error": "Profile not found"}, status=404)
 
-        user = request.user
-        data = request.data
-
-        user.first_name = data.get("first_name", user.first_name)
-        user.last_name = data.get("last_name", user.last_name)
-        user.username = data.get("username", user.username)
-        user.profile_picture = data.get("profile_picture", user.profile_picture)
-        user.save()
-
-        return JsonResponse({"success": "Profile updated successfully"})
+        serializer = ProfileSerializer(profile, data=request.data, partial=True)
+        if serializer.is_valid():
+            serializer.save()
+            return Response({"success": "Profile updated"})
+        return Response(serializer.errors, status=400)
 
 
-### 🔹 DEACTIVATE ACCOUNT (Soft Delete) ###
-class DeactivateAccountView(APIView):
+### 🔹 CREATE PREFERENCE ###
+class CreatePreferenceView(APIView):
     permission_classes = [IsAuthenticated]
 
     def post(self, request):
-        """ Soft delete user account """
+        if hasattr(request.user, 'preference'):
+            return Response({"error": "Preferences already exist"}, status=400)
 
-        user = request.user
-        user.is_active = False
-        user.save()
-        return JsonResponse({"success": "Account deactivated successfully"})
+        serializer = PreferenceSerializer(data=request.data)
+        if serializer.is_valid():
+            serializer.save(user=request.user)
+            request.user.is_preference_complete = True
+            request.user.save()
+            return Response({"success": "Preferences created"})
+        return Response(serializer.errors, status=400)
+
+
+### 🔹 UPDATE PREFERENCE ###
+class UpdatePreferenceView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def put(self, request):
+        pref = getattr(request.user, 'preference', None)
+        if not pref:
+            return Response({"error": "Preferences not found"}, status=404)
+
+        serializer = PreferenceSerializer(pref, data=request.data, partial=True)
+        if serializer.is_valid():
+            serializer.save()
+            return Response({"success": "Preferences updated"})
+        return Response(serializer.errors, status=400)
+
+
+### 🔹 GET USER DASHBOARD DATA ###
+class UserDashboardView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        user_data = UserSerializer(request.user).data
+        profile_data = ProfileSerializer(getattr(request.user, 'profile', None)).data if hasattr(request.user, 'profile') else None
+        preference_data = PreferenceSerializer(getattr(request.user, 'preference', None)).data if hasattr(request.user, 'preference') else None
+
+        return Response({
+            "user": user_data,
+            "profile": profile_data,
+            "preference": preference_data
+        })

@@ -1,25 +1,29 @@
 from django.urls import path
 from .views import (
-    RegisterUserView, LoginUserView, GoogleLoginView,
-    GenerateOTPView, VerifyOTPView, ResetPasswordView,
-    UpdateProfileView, DeactivateAccountView, LogoutUserView
+    RegisterUserView, LoginUserView, LogoutUserView,
+    GoogleLoginView, GenerateOTPView, VerifyOTPView,
+    ResetPasswordView, CreateProfileView, UpdateProfileView,
+    CreatePreferenceView, UpdatePreferenceView, UserDashboardView
 )
 
 urlpatterns = [
-    # Authentication
+    # Auth + OTP
     path('register/', RegisterUserView.as_view(), name='register'),
     path('login/', LoginUserView.as_view(), name='login'),
-    path('google-login/', GoogleLoginView.as_view(), name='google_login'),
-    path('logout/',LogoutUserView.as_view(), name='logout'),
+    path('logout/', LogoutUserView.as_view(), name='logout'),
+    path('google-login/', GoogleLoginView.as_view(), name='google-login'),
+    path('otp/generate/', GenerateOTPView.as_view(), name='generate-otp'),
+    path('otp/verify/', VerifyOTPView.as_view(), name='verify-otp'),
+    path('reset-password/', ResetPasswordView.as_view(), name='reset-password'),
 
-    # OTP
-    path('generate-otp/', GenerateOTPView.as_view(), name='generate_otp'),
-    path('verify-otp/', VerifyOTPView.as_view(), name='verify_otp'),
+    # Profile
+    path('profile/create/', CreateProfileView.as_view(), name='create-profile'),
+    path('profile/update/', UpdateProfileView.as_view(), name='update-profile'),
 
-    # Password Reset
-    path('reset-password/', ResetPasswordView.as_view(), name='reset_password'),
+    # Preferences
+    path('preference/create/', CreatePreferenceView.as_view(), name='create-preference'),
+    path('preference/update/', UpdatePreferenceView.as_view(), name='update-preference'),
 
-    # Profile Management
-    path('update-profile/', UpdateProfileView.as_view(), name='update_profile'),
-    path('deactivate-account/', DeactivateAccountView.as_view(), name='deactivate_account'),
+    # Dashboard
+    path('dashboard/', UserDashboardView.as_view(), name='user-dashboard'),
 ]

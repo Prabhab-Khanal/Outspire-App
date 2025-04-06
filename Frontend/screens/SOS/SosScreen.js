@@ -10,6 +10,8 @@ import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import * as Location from 'expo-location';
 import * as Haptics from 'expo-haptics';
 import { AnimatedCircularProgress } from 'react-native-circular-progress';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import * as Linking from 'expo-linking';
 
 export default function SosScreen() {
   const navigation = useNavigation();
@@ -48,7 +50,7 @@ export default function SosScreen() {
           {
             text: `Continue (${countdown})`,
             style: 'default',
-            onPress: () => {}, // stay on screen
+            onPress: () => {},
           },
         ]
       );
@@ -58,15 +60,17 @@ export default function SosScreen() {
   }, [navigation, isCounting, countdown]);
 
   const startCountdown = () => {
+    if (isCounting) return;
+
     setIsCounting(true);
     let time = 10;
     setCountdown(time);
 
+    if (timerRef.current) clearInterval(timerRef.current);
+
     timerRef.current = setInterval(() => {
       time -= 1;
       setCountdown(time);
-
-      // Vibrate every second
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
 
       if (time === 0) {
@@ -108,16 +112,46 @@ export default function SosScreen() {
     try {
       const { status } = await Location.requestForegroundPermissionsAsync();
       if (status !== 'granted') {
-        console.log('❌ Location permission denied');
+        Alert.alert('Permission Denied', 'Location permission is required.');
         return;
       }
 
       const location = await Location.getCurrentPositionAsync({});
-      console.log('📍 Location:');
-      console.log('Latitude:', location.coords.latitude);
-      console.log('Longitude:', location.coords.longitude);
+      const latitude = location.coords.latitude;
+      const longitude = location.coords.longitude;
+
+      // 🔹 Send location to backend
+      const response = await fetch('http://<YOUR_BACKEND_URL>/api/sos/send/', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer YOUR_JWT_TOKEN_HERE`, // Replace with real token
+        },
+        body: JSON.stringify({ latitude, longitude }),
+      });
+
+      const data = await response.json();
+      if (response.ok) {
+        Alert.alert('🚨 SOS Sent', 'Your location has been shared.');
+
+        // 🔹 Load contacts from local storage and call them
+        const stored = await AsyncStorage.getItem('emergency_contacts');
+        if (stored) {
+          const contacts = JSON.parse(stored);
+
+          for (const contact of contacts) {
+            Linking.openURL(`tel:${contact.phone}`);
+            await new Promise((res) => setTimeout(res, 3000));
+          }
+        } else {
+          console.log('No emergency contacts found.');
+        }
+      } else {
+        Alert.alert('SOS Failed', data.message || 'Could not send SOS.');
+      }
     } catch (err) {
-      console.log('❌ Location error:', err.message);
+      console.log('❌ SOS Error:', err.message);
+      Alert.alert('Error', 'Something went wrong while sending SOS.');
     }
   };
 
@@ -136,9 +170,7 @@ export default function SosScreen() {
             rotation={0}
             lineCap="round"
           >
-            {() => (
-              <Text style={styles.timerText}>{countdown}s</Text>
-            )}
+            {() => <Text style={styles.timerText}>{countdown}s</Text>}
           </AnimatedCircularProgress>
 
           <TouchableOpacity onPress={cancelSOS} style={styles.cancelButton}>
@@ -151,13 +183,19 @@ export default function SosScreen() {
         </View>
       )}
 
-      {sosCancelled && (
-        <Text style={styles.cancelledMsg}>🛑 SOS Stopped</Text>
+      {sosCancelled && <Text style={styles.cancelledMsg}>🛑 SOS Stopped</Text>}
+      {sosSent && (
+        <Text style={styles.helpMsg}>
+          🚨 Help is on the way. Please stay calm and be patient.
+        </Text>
       )}
 
-      {sosSent && (
-        <Text style={styles.helpMsg}>🚨 Help is on the way. Please stay calm and be patient.</Text>
-      )}
+      <TouchableOpacity
+        onPress={() => navigation.navigate('EmergencyContacts')}
+        style={styles.manageContactsButton}
+      >
+        <Text style={styles.manageContactsText}>Manage Emergency Contacts</Text>
+      </TouchableOpacity>
     </View>
   );
 }
@@ -224,5 +262,17 @@ const styles = StyleSheet.create({
     fontWeight: 'bold',
     textAlign: 'center',
     paddingHorizontal: 30,
+  },
+  manageContactsButton: {
+    marginTop: 30,
+    backgroundColor: '#007bff',
+    padding: 12,
+    borderRadius: 8,
+    width: 220,
+    alignItems: 'center',
+  },
+  manageContactsText: {
+    color: 'white',
+    fontWeight: 'bold',
   },
 });
