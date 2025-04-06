@@ -1,14 +1,12 @@
 import React, { useEffect, useState } from 'react';
 import {
-  View,
-  Text,
-  TextInput,
-  TouchableOpacity,
-  FlatList,
-  Alert,
-  StyleSheet,
+  View, Text, TextInput, TouchableOpacity, FlatList, Alert, StyleSheet,
 } from 'react-native';
-import AsyncStorage from '@react-native-async-storage/async-storage';
+import {
+  getEmergencyContacts,
+  addEmergencyContact,
+  deleteEmergencyContact,
+} from '../../services/sosService';
 
 export default function EmergencyContactsScreen() {
   const [contacts, setContacts] = useState([]);
@@ -16,52 +14,49 @@ export default function EmergencyContactsScreen() {
   const [phone, setPhone] = useState('');
 
   useEffect(() => {
-    loadContacts();
+    fetchContacts();
   }, []);
 
-  const loadContacts = async () => {
+  const fetchContacts = async () => {
     try {
-      const stored = await AsyncStorage.getItem('emergency_contacts');
-      if (stored) {
-        setContacts(JSON.parse(stored));
-      }
+      const data = await getEmergencyContacts();
+      setContacts(data);
     } catch (err) {
-      console.log('Error loading contacts:', err);
+      console.log('❌ Error fetching contacts:', err);
+      Alert.alert('Error', 'Could not load emergency contacts.');
     }
   };
 
-  const saveContacts = async (newContacts) => {
-    try {
-      await AsyncStorage.setItem('emergency_contacts', JSON.stringify(newContacts));
-    } catch (err) {
-      console.log('Error saving contacts:', err);
-    }
-  };
-
-  const addContact = () => {
+  const handleAddContact = async () => {
     if (!name || !phone) {
-      Alert.alert('Missing Info', 'Please fill both name and phone number.');
+      Alert.alert('Missing Info', 'Please enter both name and phone.');
       return;
     }
-
-    const newContact = { id: Date.now().toString(), name, phone };
-    const updated = [...contacts, newContact];
-    setContacts(updated);
-    saveContacts(updated);
-    setName('');
-    setPhone('');
+    try {
+      await addEmergencyContact({ name, phone });
+      setName('');
+      setPhone('');
+      fetchContacts();
+    } catch (err) {
+      console.log('❌ Add contact error:', err);
+      Alert.alert('Error', 'Failed to add contact.');
+    }
   };
 
-  const removeContact = (id) => {
+  const handleDeleteContact = async (id) => {
     Alert.alert('Confirm', 'Remove this contact?', [
       { text: 'Cancel', style: 'cancel' },
       {
         text: 'Remove',
         style: 'destructive',
-        onPress: () => {
-          const updated = contacts.filter((item) => item.id !== id);
-          setContacts(updated);
-          saveContacts(updated);
+        onPress: async () => {
+          try {
+            await deleteEmergencyContact(id);
+            fetchContacts();
+          } catch (err) {
+            console.log('❌ Delete contact error:', err);
+            Alert.alert('Error', 'Failed to delete contact.');
+          }
         },
       },
     ]);
@@ -73,7 +68,10 @@ export default function EmergencyContactsScreen() {
         <Text style={styles.contactName}>{item.name}</Text>
         <Text style={styles.contactPhone}>{item.phone}</Text>
       </View>
-      <TouchableOpacity onPress={() => removeContact(item.id)} style={styles.removeButton}>
+      <TouchableOpacity
+        style={styles.removeButton}
+        onPress={() => handleDeleteContact(item.id)}
+      >
         <Text style={styles.removeButtonText}>Remove</Text>
       </TouchableOpacity>
     </View>
@@ -83,94 +81,51 @@ export default function EmergencyContactsScreen() {
     <View style={styles.container}>
       <Text style={styles.header}>Emergency Contacts</Text>
 
-      <View style={styles.form}>
-        <TextInput
-          placeholder="Name"
-          value={name}
-          onChangeText={setName}
-          style={styles.input}
-        />
-        <TextInput
-          placeholder="Phone Number"
-          value={phone}
-          onChangeText={setPhone}
-          keyboardType="phone-pad"
-          style={styles.input}
-        />
-        <TouchableOpacity onPress={addContact} style={styles.addButton}>
-          <Text style={styles.addButtonText}>Add Contact</Text>
-        </TouchableOpacity>
-      </View>
+      <TextInput
+        placeholder="Name"
+        value={name}
+        onChangeText={setName}
+        style={styles.input}
+      />
+      <TextInput
+        placeholder="Phone Number"
+        value={phone}
+        onChangeText={setPhone}
+        keyboardType="phone-pad"
+        style={styles.input}
+      />
+      <TouchableOpacity style={styles.addButton} onPress={handleAddContact}>
+        <Text style={styles.addButtonText}>Add Contact</Text>
+      </TouchableOpacity>
 
       <FlatList
         data={contacts}
-        keyExtractor={(item) => item.id}
+        keyExtractor={(item) => item.id.toString()}
         renderItem={renderItem}
-        contentContainerStyle={{ paddingBottom: 40 }}
+        contentContainerStyle={{ paddingBottom: 30 }}
       />
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#f8f9fa',
-    paddingHorizontal: 20,
-    paddingTop: 40,
-  },
-  header: {
-    fontSize: 24,
-    fontWeight: 'bold',
-    color: '#d9534f',
-    marginBottom: 20,
-    textAlign: 'center',
-  },
-  form: {
-    marginBottom: 30,
-  },
+  container: { flex: 1, padding: 20, backgroundColor: '#f8f9fa' },
+  header: { fontSize: 24, fontWeight: 'bold', color: '#d9534f', marginBottom: 20, textAlign: 'center' },
   input: {
-    backgroundColor: '#fff',
-    borderColor: '#ccc',
-    borderWidth: 1,
-    borderRadius: 8,
-    padding: 12,
-    marginBottom: 10,
+    borderWidth: 1, borderColor: '#ccc', borderRadius: 8, padding: 12, marginBottom: 10, backgroundColor: '#fff',
   },
   addButton: {
-    backgroundColor: '#28a745',
-    padding: 12,
-    borderRadius: 8,
-    alignItems: 'center',
+    backgroundColor: '#28a745', padding: 12, borderRadius: 8, alignItems: 'center', marginBottom: 20,
   },
-  addButtonText: {
-    color: 'white',
-    fontWeight: 'bold',
-  },
+  addButtonText: { color: 'white', fontWeight: 'bold' },
   contactItem: {
-    backgroundColor: '#fff',
-    padding: 14,
-    borderRadius: 8,
-    marginBottom: 10,
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
+    backgroundColor: '#fff', padding: 14, borderRadius: 8, marginBottom: 10,
+    flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
   },
-  contactName: {
-    fontWeight: 'bold',
-    fontSize: 16,
-  },
-  contactPhone: {
-    color: '#555',
-  },
+  contactName: { fontWeight: 'bold', fontSize: 16 },
+  contactPhone: { color: '#555' },
   removeButton: {
-    backgroundColor: '#dc3545',
-    paddingVertical: 6,
-    paddingHorizontal: 12,
-    borderRadius: 6,
+    backgroundColor: '#dc3545', paddingVertical: 6, paddingHorizontal: 12, borderRadius: 6,
   },
-  removeButtonText: {
-    color: 'white',
-    fontWeight: 'bold',
-  },
+  removeButtonText: { color: 'white', fontWeight: 'bold' },
 });
