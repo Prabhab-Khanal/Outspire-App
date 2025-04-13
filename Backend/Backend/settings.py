@@ -44,10 +44,15 @@ INSTALLED_APPS = [
     'rest_framework_simplejwt',
     'corsheaders',
     'rest_framework_simplejwt.token_blacklist',
+    'channels',
 
     'users',
     'trails',
     'sos',
+    'community',
+    'chats',
+    'payments',
+    'notifications',
 ]
 
 MIDDLEWARE = [
@@ -175,6 +180,42 @@ CORS_ALLOWED_ORIGINS = [
     "http://localhost:8081",  
 ]
 CORS_ALLOW_ALL_ORIGINS = True
+
+
 # Email Settings (For Development - Prints emails to the console)
 EMAIL_BACKEND = "django.core.mail.backends.console.EmailBackend"
 DEFAULT_FROM_EMAIL = "Outspire Team <noreply@outspire.com>"
+
+
+
+# # Email Backend Configuration for Real Email Sending
+# EMAIL_BACKEND = 'django.core.mail.backends.smtp.EmailBackend'
+# EMAIL_HOST = 'smtp.gmail.com'  # Gmail SMTP server
+# EMAIL_PORT = 587  # Port for TLS
+# EMAIL_USE_TLS = True  # Use TLS encryption
+# EMAIL_HOST_USER = 'prabhabkhanal1997@gmail.com'  # Your Gmail address
+# EMAIL_HOST_PASSWORD = 'Khanal@311'  # Your Gmail app password
+# DEFAULT_FROM_EMAIL = 'prabhabkhanal1997@gmail.com'  # The sender email (can be the same as EMAIL_HOST_USER)
+
+
+CACHES = {
+    'default': {
+        'BACKEND': 'django.core.cache.backends.locmem.LocMemCache',
+    }
+}
+
+ASGI_APPLICATION = 'Backend.asgi.application'
+
+CHANNEL_LAYERS = {
+    'default': {
+        'BACKEND': 'channels_redis.core.RedisChannelLayer',
+        'CONFIG': {
+            "hosts": [('127.0.0.1', 6379)],  # Redis configuration
+        },
+    },
+}
+
+
+KHALTI_PUBLIC_KEY = '4d78bf3fa097489886eedfeb2a090e8d'  # Replace with your actual public key
+KHALTI_SECRET_KEY = '231f7b8810554fae98d905421978f07c'  # Replace with your actual secret key
+

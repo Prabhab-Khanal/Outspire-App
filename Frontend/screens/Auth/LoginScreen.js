@@ -1,12 +1,12 @@
 import React, { useState } from 'react';
-import { View, Text, TextInput, Button, StyleSheet, KeyboardAvoidingView, Platform } from 'react-native';
+import { View, Text, TextInput, Button, StyleSheet, KeyboardAvoidingView, Platform, Alert } from 'react-native';
 import { loginUser } from '../../services/authService';
 import useAuth from '../../hooks/useAuth';
 
 export default function LoginScreen({ navigation }) {
   const [username_or_email, setIdentifier] = useState('');
   const [password, setPassword] = useState('');
-  const { login } = useAuth();
+  const { login, user } = useAuth();  // Access user context
 
   const handleLogin = async () => {
     console.log("Logging in with:", username_or_email);
@@ -14,10 +14,28 @@ export default function LoginScreen({ navigation }) {
     try {
       const res = await loginUser({ username_or_email, password });
       console.log("Login success:", res.data);
+
+      // Save the token and user data
       await login(res.data.access_token);
+
+      // Check profile completion flags and navigate accordingly
+      if (
+        !user.is_profile_complete || 
+        !user.is_preference_complete || 
+        !user.is_emergencycontact_complete
+      ) {
+        console.log("Profile incomplete, redirecting to CompleteProfile");
+        navigation.navigate('CompleteProfile');  // Navigate to Profile completion
+      } else {
+        console.log("Profile complete, navigating to Dashboard");
+        navigation.navigate('DashboardNavigator');  // Navigate to the Dashboard
+      }
     } catch (err) {
       console.log("Login failed:", err.message);
-      if (err.response) console.log("Server:", err.response.data);
+      if (err.response) {
+        console.log("Server response:", err.response.data);
+        Alert.alert("Login failed", "Please check your credentials.");
+      }
     }
   };
 

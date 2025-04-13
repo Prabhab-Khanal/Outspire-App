@@ -1,12 +1,7 @@
-
-
 from rest_framework import serializers
-from .models import EmergencyContact, SOSAlert
+from .models import  SOSAlert
 
-class EmergencyContactSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = EmergencyContact
-        fields = ['id', 'name', 'phone']
+
 
 
 class SOSAlertSerializer(serializers.ModelSerializer):

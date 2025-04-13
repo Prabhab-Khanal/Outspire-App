@@ -1,43 +1,31 @@
 from rest_framework import serializers
-from .models import CommunityPost, PostImage, PostComment, PostLike
+from .models import Post, PostImage, Like, Comment
 
-
+# Serializer for the PostImage model
 class PostImageSerializer(serializers.ModelSerializer):
     class Meta:
         model = PostImage
         fields = ['id', 'image']
 
-
-class PostCommentSerializer(serializers.ModelSerializer):
-    user = serializers.StringRelatedField(read_only=True)
-
-    class Meta:
-        model = PostComment
-        fields = ['id', 'user', 'comment', 'created_at']
-
-
-class PostLikeSerializer(serializers.ModelSerializer):
-    user = serializers.StringRelatedField(read_only=True)
+# Serializer for the Post model
+class PostSerializer(serializers.ModelSerializer):
+    user = serializers.StringRelatedField()  # Display the user's username instead of ID
+    likes = serializers.IntegerField(source='likes.count', read_only=True)  # Count of likes
+    comments = serializers.IntegerField(source='comments.count', read_only=True)  # Count of comments
+    images = PostImageSerializer(many=True, read_only=True)  # Include all images for the post
 
     class Meta:
-        model = PostLike
-        fields = ['id', 'user', 'created_at']
+        model = Post
+        fields = ['id', 'user', 'content', 'created_at', 'likes', 'comments', 'images']
 
-
-class CommunityPostSerializer(serializers.ModelSerializer):
-    user = serializers.StringRelatedField(read_only=True)
-    images = PostImageSerializer(many=True, read_only=True)
-    comments_count = serializers.SerializerMethodField()
-    likes_count = serializers.SerializerMethodField()
-
+# Serializer for the Like model
+class LikeSerializer(serializers.ModelSerializer):
     class Meta:
-        model = CommunityPost
-        fields = ['id', 'user', 'caption', 'location', 'created_at', 'images', 'comments_count', 'likes_count']
+        model = Like
+        fields = ['id', 'user', 'post', 'created_at']
 
-    def get_comments_count(self, obj):
-        return obj.comments.count()
-
-    def get_likes_count(self, obj):
-        return obj.likes.count()
-
-
+# Serializer for the Comment model
+class CommentSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Comment
+        fields = ['id', 'user', 'post', 'content', 'created_at']

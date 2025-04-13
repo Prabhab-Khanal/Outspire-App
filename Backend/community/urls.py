@@ -1,13 +1,12 @@
 from django.urls import path, include
 from rest_framework.routers import DefaultRouter
-from .views import CommunityPostViewSet, PostCommentViewSet
+from .views import PostViewSet
 
+# Set up the DefaultRouter
 router = DefaultRouter()
-router.register(r'posts', CommunityPostViewSet, basename='community-post')
+router.register(r'posts', PostViewSet)  # This will automatically include the custom actions like 'like', 'comment', etc.
+
 
 urlpatterns = [
-    path('', include(router.urls)),
-
-    # Comment endpoints per post
-    path('posts/<int:post_id>/comments/', PostCommentViewSet.as_view({'get': 'list', 'post': 'create'})),
+    path('api/', include(router.urls)),  # API endpoint for posts and comments
 ]

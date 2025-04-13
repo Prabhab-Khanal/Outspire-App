@@ -1,3 +1,4 @@
+from django.conf import settings
 from django.db import models
 from django.contrib.auth.models import AbstractBaseUser, BaseUserManager, PermissionsMixin
 from django.utils.timezone import now
@@ -25,7 +26,7 @@ class UserManager(BaseUserManager):
 
         user = self.model(username=username, email=email, phone_number=phone_number, **extra_fields)
         if password:
-            user.set_password(password)
+            user.set_password(password)  # Securely set password
         user.save(using=self._db)
         return user
 
@@ -34,6 +35,7 @@ class UserManager(BaseUserManager):
         extra_fields.setdefault('is_superuser', True)
         extra_fields.setdefault('role', 'Admin')
         return self.create_user(username, email, password, **extra_fields)
+
 
 class User(AbstractBaseUser, PermissionsMixin):
     """ Custom User Model """
@@ -46,16 +48,21 @@ class User(AbstractBaseUser, PermissionsMixin):
     email = models.EmailField(unique=True)
     phone_number = models.CharField(max_length=15, unique=True, blank=True, null=True)
 
-    password = models.CharField(max_length=255, blank=True, null=True)
+    # Profile Fields
     profile_picture = models.ImageField(upload_to='profile_pictures/', blank=True, null=True)
+    bio = models.TextField(blank=True, null=True)
+    date_of_birth = models.DateField(blank=True, null=True)
+    gender = models.CharField(max_length=20, choices=[('Male', 'Male'), ('Female', 'Female'), ('Other', 'Other')], blank=True)
+    location = models.CharField(max_length=100, blank=True, null=True)
 
+    # User Role & Verification Status
     role = models.CharField(max_length=20, choices=USER_ROLES, default='Regular')
-
-    # Verification & Onboarding Status
     is_email_verified = models.BooleanField(default=False)
+    is_emergencycontact_complete = models.BooleanField(default=False)
     is_profile_complete = models.BooleanField(default=False)
     is_preference_complete = models.BooleanField(default=False)
 
+    # Authentication Fields
     is_active = models.BooleanField(default=True)
     is_staff = models.BooleanField(default=False)
     is_superuser = models.BooleanField(default=False)
@@ -75,23 +82,54 @@ class User(AbstractBaseUser, PermissionsMixin):
         return self.username
 
 
-class UserProfile(models.Model):
-    user = models.OneToOneField('User', on_delete=models.CASCADE, related_name='profile')
-    bio = models.TextField(blank=True)
-    date_of_birth = models.DateField(blank=True, null=True)
-    gender = models.CharField(max_length=20, choices=[('Male', 'Male'), ('Female', 'Female'), ('Other', 'Other')], blank=True)
-    location = models.CharField(max_length=100, blank=True)
-
-    def __str__(self):
-        return f"Profile of {self.user.username}"
-
-
 class UserPreference(models.Model):
+    """ User Preferences Model for Trail-related Information """
+
     user = models.OneToOneField('User', on_delete=models.CASCADE, related_name='preference')
-    preferred_trail_type = models.CharField(max_length=100, blank=True)  # e.g., Mountain, Road
-    preferred_difficulty = models.CharField(max_length=50, blank=True)   # Easy, Medium, Hard
-    likes_group_rides = models.BooleanField(default=False)
-    wants_event_notifications = models.BooleanField(default=True)
+    
+    # Trail Preferences
+    preferred_trail_type = models.CharField(
+        max_length=100, 
+        choices=[('Mountain', 'Mountain'), ('Road', 'Road'), ('Coastal', 'Coastal'), ('Forest', 'Forest')],
+        blank=True, null=True
+    )  # e.g., Mountain, Road
+    preferred_difficulty = models.CharField(
+        max_length=50, 
+        choices=[('Easy', 'Easy'), ('Medium', 'Medium'), ('Hard', 'Hard')],
+        blank=True, null=True
+    )  # e.g., Easy, Medium, Hard
+    preferred_terrain = models.CharField(
+        max_length=100, 
+        choices=[('Gravel', 'Gravel'), ('Asphalt', 'Asphalt'), ('Snow', 'Snow'), ('Forest', 'Forest')],
+        blank=True, null=True
+    )  # e.g., Gravel, Asphalt, Snow, Forest
+    preferred_length = models.CharField(
+        max_length=50, 
+        choices=[('Short', 'Short (<5 km)'), ('Medium', 'Medium (5-15 km)'), ('Long', 'Long (>15 km)')],
+        blank=True, null=True
+    )  
 
     def __str__(self):
         return f"Preference of {self.user.username}"
+
+class EmergencyContact(models.Model):
+    """ Emergency Contact Model to store user emergency contacts """
+
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='emergency_contacts')
+    contact_name = models.CharField(max_length=100)
+    phone_number = models.CharField(max_length=15)
+    relationship = models.CharField(max_length=100, blank=True, null=True)  # Relationship with the user
+    is_primary = models.BooleanField(default=False)  # Flag for the primary emergency contact
+
+    # Optional fields for more details
+    email = models.EmailField(blank=True, null=True)
+    address = models.CharField(max_length=255, blank=True, null=True)
+
+    def __str__(self):
+        return f"{self.contact_name} ({self.relationship})"
+
+    class Meta:
+        # Ensure that only one primary contact exists per user
+        constraints = [
+            models.UniqueConstraint(fields=['user', 'is_primary'], condition=models.Q(is_primary=True), name='unique_primary_contact')
+        ]
