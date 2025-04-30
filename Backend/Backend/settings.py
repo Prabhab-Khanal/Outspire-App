@@ -53,6 +53,7 @@ INSTALLED_APPS = [
     'chats',
     'payments',
     'notifications',
+    'admin_panel',
 ]
 
 MIDDLEWARE = [
@@ -178,24 +179,30 @@ AUTH_USER_MODEL = "users.User"
 
 CORS_ALLOWED_ORIGINS = [
     "http://localhost:8081",  
+    "http://localhost:5173",
+]
+
+CSRF_TRUSTED_ORIGINS = [
+    "http://localhost:5173",
+    "http://localhost:8081",
 ]
 CORS_ALLOW_ALL_ORIGINS = True
 
 
 # Email Settings (For Development - Prints emails to the console)
-EMAIL_BACKEND = "django.core.mail.backends.console.EmailBackend"
-DEFAULT_FROM_EMAIL = "Outspire Team <noreply@outspire.com>"
+# EMAIL_BACKEND = "django.core.mail.backends.console.EmailBackend"
+# DEFAULT_FROM_EMAIL = "Outspire Team <noreply@outspire.com>"
 
 
 
-# # Email Backend Configuration for Real Email Sending
-# EMAIL_BACKEND = 'django.core.mail.backends.smtp.EmailBackend'
-# EMAIL_HOST = 'smtp.gmail.com'  # Gmail SMTP server
-# EMAIL_PORT = 587  # Port for TLS
-# EMAIL_USE_TLS = True  # Use TLS encryption
-# EMAIL_HOST_USER = 'prabhabkhanal1997@gmail.com'  # Your Gmail address
-# EMAIL_HOST_PASSWORD = 'Khanal@311'  # Your Gmail app password
-# DEFAULT_FROM_EMAIL = 'prabhabkhanal1997@gmail.com'  # The sender email (can be the same as EMAIL_HOST_USER)
+# Email Backend Configuration for Real Email Sending
+EMAIL_BACKEND = 'django.core.mail.backends.smtp.EmailBackend'
+EMAIL_HOST = 'smtp.gmail.com'  # Gmail SMTP server
+EMAIL_PORT = 587  # Port for TLS
+EMAIL_USE_TLS = True  # Use TLS encryption
+EMAIL_HOST_USER = 'outspirenoreply@gmail.com'  # Your Gmail address
+EMAIL_HOST_PASSWORD = 'ghwk tcfu drdj wlcn'  # Your Gmail app password
+DEFAULT_FROM_EMAIL = 'outspirenoreply@gmail.com'  # The sender email (can be the same as EMAIL_HOST_USER)
 
 
 CACHES = {
@@ -215,7 +222,31 @@ CHANNEL_LAYERS = {
     },
 }
 
+GOOGLE_CLIENT_ID = "140410631788-cofh3evi376cfjoeptggft59ne60de0f.apps.googleusercontent.com"
 
-KHALTI_PUBLIC_KEY = '4d78bf3fa097489886eedfeb2a090e8d'  # Replace with your actual public key
-KHALTI_SECRET_KEY = '231f7b8810554fae98d905421978f07c'  # Replace with your actual secret key
+KHALTI_PUBLIC_KEY = '28e1b5204eef4e7f87a64d10b02fd24c'  # Replace with your actual public key
+KHALTI_SECRET_KEY = '52707625f28a4931878cfb4ad70ce5d4'  # Replace with your actual secret key
 
+# LOGGING = {
+#     'version': 1,
+#     'disable_existing_loggers': False,
+#     'handlers': {
+#         'file': {
+#             'level': 'DEBUG',
+#             'class': 'logging.FileHandler',
+#             'filename': 'debug.log',
+#         },
+#     },
+#     'loggers': {
+#         'django': {
+#             'handlers': ['file'],
+#             'level': 'DEBUG',
+#             'propagate': True,
+#         },
+#     },
+# }
+
+
+
+MEDIA_URL = '/media/'
+MEDIA_ROOT = os.path.join(BASE_DIR, 'media')

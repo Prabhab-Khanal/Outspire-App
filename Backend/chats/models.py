@@ -1,21 +1,31 @@
 from django.db import models
-from django.conf import settings
+from django.contrib.auth import get_user_model
 
-# Model for storing group chat details
-class ChatRoom(models.Model):
-    name = models.CharField(max_length=255)  # Chat room name (can be dynamic for group names)
-    participants = models.ManyToManyField(settings.AUTH_USER_MODEL, related_name='chat_rooms')  # Users in the group chat
+User = get_user_model()
+
+class Message(models.Model):
+    sender = models.ForeignKey(User, related_name='sent_messages', on_delete=models.CASCADE)
+    receiver = models.ForeignKey(User, related_name='received_messages', on_delete=models.CASCADE)
+    text = models.TextField()
+    timestamp = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return f"From {self.sender.username} to {self.receiver.username} at {self.timestamp}"
+
+class ChatGroup(models.Model):
+    name = models.CharField(max_length=255)
+    members = models.ManyToManyField(User, related_name='chat_groups')
+
+    created_at = models.DateTimeField(auto_now_add=True)
 
     def __str__(self):
         return self.name
 
-
-# Model for storing messages in the chat room
-class ChatMessage(models.Model):
-    room = models.ForeignKey(ChatRoom, related_name='messages', on_delete=models.CASCADE)  # Chat room the message belongs to
-    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE)  # User sending the message
-    content = models.TextField()  # Message content
-    created_at = models.DateTimeField(auto_now_add=True)  # Timestamp of when the message was sent
+class GroupMessage(models.Model):
+    group = models.ForeignKey(ChatGroup, related_name='messages', on_delete=models.CASCADE)
+    sender = models.ForeignKey(User, related_name='group_messages', on_delete=models.CASCADE)
+    text = models.TextField()
+    timestamp = models.DateTimeField(auto_now_add=True)
 
     def __str__(self):
-        return f"{self.user.username}: {self.content[:30]}"  # Preview of message content (first 30 chars)
+        return f"Group {self.group.name}: {self.sender.username}: {self.text[:20]}"

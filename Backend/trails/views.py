@@ -1,147 +1,182 @@
-from django.shortcuts import get_object_or_404
-from rest_framework.views import APIView
+from rest_framework import generics, status
 from rest_framework.response import Response
-from rest_framework.permissions import IsAuthenticated
-from .models import Trail, TrailPoint, TrailImage
-from .serializers import TrailSerializer, TrailPointSerializer, TrailImageSerializer
-from django.http import JsonResponse
+from rest_framework.parsers import MultiPartParser, FormParser
+from .models import Trail, TrailSegment, Waypoint, OfflineMap, TrailReview, TrailImage, WaypointImage
+from .serializers import TrailSerializer, TrailSegmentSerializer, WaypointSerializer, OfflineMapSerializer, TrailReviewSerializer
+import json
+from rest_framework.permissions import IsAuthenticated, AllowAny
 
-# Add Trail View (includes checklist items)
-class AddTrailView(APIView):
-    permission_classes = [IsAuthenticated]
+# Create a new Trail with handling images and parsing fields
+class TrailCreateView(generics.CreateAPIView):
+    queryset = Trail.objects.all()
+    serializer_class = TrailSerializer
+    parser_classes = [MultiPartParser, FormParser]
+    permission_classes = [AllowAny]
 
-    def post(self, request):
+    def post(self, request, *args, **kwargs):
         data = request.data
-        
-        trail_data = {
-            "name": data.get("name"),
-            "location": data.get("location"),
-            "difficulty": data.get("difficulty"),
-            "distance": data.get("distance"),
-            "elevation": data.get("elevation"),
-            "estimated_time": data.get("estimated_time"),
-            "description": data.get("description"),
-        }
+        print("Received data for creating trail:", data)
 
-        serializer = TrailSerializer(data=trail_data)
-        if serializer.is_valid():
-            trail = serializer.save()
+        # Parse checklist
+        checklist = json.loads(data.get('checklist', '[]'))
+        print("Parsed checklist:", checklist)
 
-            # Handle Trail Points
-            points_data = data.get("points", [])
-            for point in points_data:
-                point_data = {
-                    "trail": trail.id,
-                    "latitude": point["latitude"],
-                    "longitude": point["longitude"],
-                    "nickname": point.get("nickname", ""),
-                    "description": point.get("description", "")
-                }
-                point_serializer = TrailPointSerializer(data=point_data)
-                if point_serializer.is_valid():
-                    point_serializer.save()
+        # Parse rawPoints and trailSegments
+        raw_points = json.loads(data.get('rawPoints', '[]'))
+        print("Parsed rawPoints:", raw_points)
+        trail_segments = json.loads(data.get('trailSegments', '[]'))
+        print("Parsed trailSegments:", trail_segments)
 
-            # Handle Trail Images (if any)
-            images = data.getlist("images", [])
-            for image in images:
-                image_data = {
-                    "trail": trail.id,
-                    "image_url": image.url,
-                }
-                image_serializer = TrailImageSerializer(data=image_data)
-                if image_serializer.is_valid():
-                    image_serializer.save()
+        # Handle multiple images
+        trail_images = request.FILES.getlist('trail_images')  # <-- GET MULTIPLE FILES from same key
 
-            # Handle Checklist items
-            checklist_items = data.get("checklist", [])
-            for item in checklist_items:
-                checklist_data = {
-                    "trail": trail.id,
-                    "item_name": item["item_name"],
-                }
-                checklist_serializer = ChecklistSerializer(data=checklist_data)
-                if checklist_serializer.is_valid():
-                    checklist_serializer.save()
+        uploaded_trail_images = []
 
-            return JsonResponse({"message": "Trail added successfully"}, status=201)
+        for img in trail_images:
+            image_instance = TrailImage.objects.create(image=img)
+            uploaded_trail_images.append(image_instance)
+            print(f"Saved trail image: {image_instance}")
 
-        return JsonResponse({"error": "Invalid data", "details": serializer.errors}, status=400)
+        # Create the Trail object
+        trail = Trail.objects.create(
+            created_by=request.user if request.user.is_authenticated else None,
+            name=data.get('name'),
+            type=data.get('type'),
+            location=data.get('location'),
+            difficulty=data.get('difficulty'),
+            description=data.get('description'),
+            distance_km=data.get('distance_km'),
+            highest_altitude=data.get('highest_altitude'),
+            checklist=checklist,
+            is_approved=False  # New trails are NOT approved initially
+        )
+        print("Trail created:", trail)
+
+        # Add images to trail (ManyToManyField)
+        trail.images.set(uploaded_trail_images)  # Assign the images to the trail (using set() for many-to-many relationships)
+
+        # First, map uploaded waypoint images by filename
+        waypoint_uploaded_files = request.FILES.getlist('waypoint_images')
+        waypoint_file_mapping = {file.name: file for file in waypoint_uploaded_files}
+
+        # Now process points
+        for point in raw_points:
+            waypoint_images = []
+
+            for image_filename in point.get('images', []):
+                image_file = waypoint_file_mapping.get(image_filename)
+                if image_file:
+                    waypoint_image = WaypointImage.objects.create(image=image_file)
+                    waypoint_images.append(waypoint_image)
+
+            waypoint = Waypoint.objects.create(
+                trail=trail,
+                name=point.get('name', ''),
+                description=point.get('description', ''),
+                latitude=point['latitude'],
+                longitude=point['longitude'],
+            )
+            waypoint.images.set(waypoint_images)
+            print("Created waypoint:", point)
 
 
-# Update Trail
-class UpdateTrailView(APIView):
-    permission_classes = [IsAuthenticated]
 
-    def put(self, request, trail_id):
-        trail = get_object_or_404(Trail, id=trail_id)
+        # Create Trail Segments
+        for seg in trail_segments:
+            TrailSegment.objects.create(
+                trail=trail,
+                routed=seg.get('routed', True),
+                points=seg.get('points', [])
+            )
+            print("Created trail segment:", seg)
+
+        return Response({"message": "Trail created successfully, pending admin approval."}, status=status.HTTP_201_CREATED)
+
+# List only approved Trails
+class TrailListView(generics.ListAPIView):
+    serializer_class = TrailSerializer
+
+    def get_queryset(self):
+        print("Fetching approved trails")
+        return Trail.objects.filter(is_approved=True)
+
+# Get single Trail detail (with segments, waypoints, offline maps, reviews)
+class TrailDetailView(generics.RetrieveAPIView):
+    queryset = Trail.objects.all()
+    serializer_class = TrailSerializer
+    lookup_field = 'id'
+
+    def get(self, request, *args, **kwargs):
+        trail = self.get_object()
+        print("Fetched Trail details for:", trail)
+        return super().get(request, *args, **kwargs)
+
+# Add Waypoints to a Trail
+class WaypointCreateView(generics.CreateAPIView):
+    serializer_class = WaypointSerializer
+
+    def post(self, request, trail_id):
+        print(f"Adding waypoints to trail {trail_id}")
+        trail = Trail.objects.get(id=trail_id)
         data = request.data
+        waypoints_data = data.get('waypoints', [])
+        print("Received waypoints data:", waypoints_data)
 
-        trail_data = {
-            "name": data.get("name", trail.name),
-            "location": data.get("location", trail.location),
-            "difficulty": data.get("difficulty", trail.difficulty),
-            "distance": data.get("distance", trail.distance),
-            "elevation": data.get("elevation", trail.elevation),
-            "estimated_time": data.get("estimated_time", trail.estimated_time),
-            "description": data.get("description", trail.description),
-        }
+        for point in waypoints_data:
+            waypoint_images = []
+            # Handle waypoint images
+            for image in point.get('images', []):
+                waypoint_image = WaypointImage.objects.create(image=image)  # Save the waypoint image
+                waypoint_images.append(waypoint_image)
 
-        serializer = TrailSerializer(trail, data=trail_data, partial=True)
-        if serializer.is_valid():
-            trail = serializer.save()
+            waypoint = Waypoint.objects.create(
+                trail=trail,
+                name=point.get('name', ''),
+                description=point.get('description', ''),
+                latitude=point['latitude'],
+                longitude=point['longitude'],
+            )
+            waypoint.images.set(waypoint_images)  # Associate images with the waypoint
+            print("Created waypoint:", point)
 
-            # Update Trail Points
-            points_data = data.get("points", [])
-            for point in points_data:
-                point_data = {
-                    "trail": trail.id,
-                    "latitude": point["latitude"],
-                    "longitude": point["longitude"],
-                    "nickname": point.get("nickname", ""),
-                    "description": point.get("description", "")
-                }
-                point_serializer = TrailPointSerializer(data=point_data)
-                if point_serializer.is_valid():
-                    point_serializer.save()
+        return Response({"message": "Waypoints added successfully"}, status=status.HTTP_201_CREATED)
 
-            # Handle Trail Images (if any)
-            images = data.getlist("images", [])
-            for image in images:
-                image_data = {
-                    "trail": trail.id,
-                    "image_url": image.url,
-                    "image_type": "Trail"
-                }
-                image_serializer = TrailImageSerializer(data=image_data)
-                if image_serializer.is_valid():
-                    image_serializer.save()
+# Upload Offline Map file for a Trail
+class OfflineMapUploadView(generics.CreateAPIView):
+    serializer_class = OfflineMapSerializer
+    parser_classes = [MultiPartParser, FormParser]
 
-            return JsonResponse({"message": "Trail updated successfully"}, status=200)
+    def post(self, request, trail_id):
+        print(f"Uploading offline map for trail {trail_id}")
+        trail = Trail.objects.get(id=trail_id)
+        file = request.FILES.get('file')
+        map_type = request.data.get('map_type', 'GeoJSON')
+        print("Received offline map:", file.name)
+        print("Map type:", map_type)
 
-        return JsonResponse({"error": "Invalid data", "details": serializer.errors}, status=400)
+        OfflineMap.objects.create(
+            trail=trail,
+            file=file,
+            map_type=map_type
+        )
 
+        return Response({"message": "Offline map uploaded successfully"}, status=status.HTTP_201_CREATED)
 
-# Delete Trail
-class DeleteTrailView(APIView):
-    permission_classes = [IsAuthenticated]
+# Add Review for a Trail
+class TrailReviewCreateView(generics.CreateAPIView):
+    serializer_class = TrailReviewSerializer
 
-    def delete(self, request, trail_id):
-        trail = get_object_or_404(Trail, id=trail_id)
-        trail.delete()
-        return JsonResponse({"message": "Trail deleted successfully"}, status=204)
+    def post(self, request, trail_id):
+        print(f"Adding review for trail {trail_id}")
+        trail = Trail.objects.get(id=trail_id)
+        data = request.data
+        print("Received review data:", data)
 
+        review = TrailReview.objects.create(
+            trail=trail,
+            written_by=request.user if request.user.is_authenticated else None,
+            rating=data.get('rating'),
+            comment=data.get('comment', '')
+        )
 
-# List All Trails
-class ListTrailsView(APIView):
-    def get(self, request):
-        trails = Trail.objects.all()
-        serializer = TrailSerializer(trails, many=True)
-        return JsonResponse({"trails": serializer.data}, status=200)
-
-
-# Retrieve Single Trail
-class RetrieveTrailView(APIView):
-    def get(self, request, trail_id):
-        trail = get_object_or_404(Trail, id=trail_id)
-        serializer = TrailSerializer(trail)
-        return JsonResponse({"trail": serializer.data}, status=200)
+        return Response({"message": "Review added successfully"}, status=status.HTTP_201_CREATED)

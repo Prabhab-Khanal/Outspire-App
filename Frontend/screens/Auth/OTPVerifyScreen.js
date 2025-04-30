@@ -1,172 +1,226 @@
-import React, { useState, useEffect } from 'react';
-import { View, Text, TextInput, StyleSheet, Alert, Button } from 'react-native';
-import { useForm, Controller } from 'react-hook-form';
-import { verifyOTP, resendOTP } from '../../services/authService';  // Import the OTP verification and resend function from authService
+import React, { useRef, useState, useEffect } from 'react';
+import {
+  View, Text, TextInput, TouchableOpacity,
+  StyleSheet, Image, KeyboardAvoidingView,
+  Platform, ActivityIndicator, Alert
+} from 'react-native';
+import { verifyOTP, resendOTP } from '../../services/authService';
+import { MaterialIcons } from '@expo/vector-icons'; // For back arrow
 
-const OTPVerifyScreen = ({ route, navigation }) => {
-  const { email, otp_type } = route.params; // Email and OTP type passed from LoginScreen
-  const { control, handleSubmit, formState: { errors }, setValue, getValues } = useForm();
+export default function EmailVerificationScreen({ route, navigation }) {
+  const { email, otp_type } = route.params;
+  const [otp, setOtp] = useState(['', '', '', '', '', '']);
   const [loading, setLoading] = useState(false);
-  const [timer, setTimer] = useState(300);  // 5 minutes in seconds
-  const [otp, setOtp] = useState(['', '', '', '', '', '']);  // Array to store OTP values
+  const [timer, setTimer] = useState(120); // 2 minutes
+  const [resending, setResending] = useState(false);
+  const inputs = useRef([]);
 
-  // Handle OTP submission
-  const onSubmit = async (data) => {
+  const handleChange = (text, index) => {
+    if (text.length > 1) text = text.charAt(0);
+    const newOtp = [...otp];
+    newOtp[index] = text;
+    setOtp(newOtp);
+    if (text && index < inputs.current.length - 1) {
+      inputs.current[index + 1].focus();
+    }
+  };
+
+  const handleBackspace = (e, index) => {
+    if (e.nativeEvent.key === 'Backspace' && otp[index] === '' && index !== 0) {
+      inputs.current[index - 1].focus();
+    }
+  };
+
+  const handleVerify = async () => {
+    const code = otp.join('');
+    if (code.length !== 6) {
+      return Alert.alert('Error', 'Please enter the complete 6-digit code.');
+    }
     try {
       setLoading(true);
-
-      // Prepare the data to send for OTP verification
-      const otpData = {
-        email,
-        otp: otp.join(''),  // Join the OTP digits from the array
-        otp_type : "register",  // 'register' or 'reset'
-      };
-
-      // Debugging: Log the OTP data being sent
-      console.log("Sending OTP data:", otpData);
-
-      // Call the verifyOTP function from authService
-      const response = await verifyOTP(otpData);
-
-      // Debugging: Log the response from the server
-      console.log("OTP verification response:", response);
-
-      // If OTP verification is successful
+      const response = await verifyOTP({ email, otp: code, otp_type });
       if (response.status === 200) {
-        Alert.alert("OTP verified", "Your email has been successfully verified.");
-        navigation.navigate('Login');  // Redirect to Login after OTP verification
+        if (otp_type === 'register') {
+          navigation.replace('Login');
+        } else if (otp_type === 'reset') {
+          navigation.replace('SetNewPassword', { email });
+        }
       } else {
-        Alert.alert("OTP verification failed", "Invalid OTP. Please try again.");
+        Alert.alert('Failed', 'Invalid OTP. Please try again.');
       }
     } catch (error) {
-      // Debugging: Log the error details
-      console.log("Error occurred during OTP verification:", error);
-
-      // Check if error response exists and log it
-      if (error.response) {
-        console.log("Error response from server:", error.response.data);
-        Alert.alert("Error", "An error occurred during OTP verification.");
-      } else {
-        Alert.alert("Error", "An unknown error occurred.");
-      }
+      console.error('Verification Error:', error);
+      Alert.alert('Error', 'An error occurred during verification.');
     } finally {
       setLoading(false);
     }
   };
 
-  // Timer functionality (countdown)
   useEffect(() => {
-    if (timer === 0) {
-      Alert.alert("OTP Expired", "The OTP has expired. Please request a new OTP.");
-      // Handle expiration (e.g., disable the OTP fields or allow the user to request a new OTP)
-    } else {
-      const interval = setInterval(() => {
-        setTimer((prevTimer) => prevTimer - 1);
-      }, 1000);
-
-      return () => clearInterval(interval);  // Cleanup on component unmount
-    }
+    if (timer === 0) return;
+    const interval = setInterval(() => setTimer(prev => prev - 1), 1000);
+    return () => clearInterval(interval);
   }, [timer]);
 
-  // Handle OTP input change
-  const handleOtpChange = (index, value) => {
-    if (value.length <= 1) {
-      const newOtp = [...otp];
-      newOtp[index] = value;
-      setOtp(newOtp);
-
-      // Focus on the next input box automatically
-      if (value && index < 5) {
-        setValue(`otp${index + 1}`, '');  // Clear next box if there's a value
+  const handleResendOTP = async () => {
+    if (timer > 0) return;
+    try {
+      setResending(true);
+      const response = await resendOTP({ email, otp_type });
+      if (response.status === 200) {
+        Alert.alert('OTP Sent', 'A new OTP has been sent to your email.');
+        setTimer(120); // Reset to 2 minutes
       }
+    } catch (error) {
+      console.error('Resend OTP Error:', error);
+      Alert.alert('Error', 'Could not resend OTP.');
+    } finally {
+      setResending(false);
     }
   };
 
-  // Resend OTP (called when OTP expires)
-  const handleResendOTP = async () => {
-    try {
-      setLoading(true);
-      const response = await resendOTP({ email, otp_type });
-      if (response.status === 200) {
-        Alert.alert("OTP Sent", "A new OTP has been sent to your email.");
-        setTimer(300);  // Reset the timer to 5 minutes
-      }
-    } catch (error) {
-      Alert.alert("Error", "Failed to resend OTP. Please try again.");
-    } finally {
-      setLoading(false);
-    }
+  const formatTime = secs => {
+    const m = Math.floor(secs / 60);
+    const s = secs % 60;
+    return `${m}:${s < 10 ? '0' : ''}${s}`;
   };
 
   return (
-    <View style={styles.container}>
-      <Text style={styles.title}>Enter OTP</Text>
-      <Text>Time left: {Math.floor(timer / 60)}:{timer % 60 < 10 ? '0' : ''}{timer % 60} minutes</Text>
+    <KeyboardAvoidingView
+      style={styles.container}
+      behavior={Platform.OS === "ios" ? "padding" : undefined}
+    >
+      {/* Back Button */}
+      <TouchableOpacity style={styles.backButton} onPress={() => navigation.navigate('Login')}>
+        <MaterialIcons name="arrow-back" size={28} color="#5A4322" />
+      </TouchableOpacity>
 
-      {/* OTP Input Fields (6 boxes) */}
+      <Image
+        source={{ uri: 'https://img.icons8.com/color/96/secured-letter.png' }}
+        style={styles.image}
+      />
+
+      <Text style={styles.heading}>Verify Your Email Address</Text>
+
+      <Text style={styles.timer}>
+        {timer > 0 ? `Time left: ${formatTime(timer)}` : 'Code expired'}
+      </Text>
+
       <View style={styles.otpContainer}>
         {otp.map((digit, index) => (
           <TextInput
             key={index}
+            ref={ref => (inputs.current[index] = ref)}
             style={styles.otpInput}
-            value={digit}
-            onChangeText={(value) => handleOtpChange(index, value)}
-            keyboardType="numeric"
+            keyboardType="number-pad"
             maxLength={1}
-            autoFocus={index === 0} // Autofocus on the first input box
+            value={digit}
+            onChangeText={text => handleChange(text, index)}
+            onKeyPress={e => handleBackspace(e, index)}
           />
         ))}
       </View>
 
-      {errors.otp && <Text style={styles.error}>{errors.otp?.message}</Text>}
-
-      <Button
-        title={loading ? "Verifying..." : "Verify OTP"}
-        onPress={handleSubmit(onSubmit)}
+      <TouchableOpacity
+        style={[styles.verifyButton, loading && { opacity: 0.6 }]}
+        onPress={handleVerify}
         disabled={loading}
-      />
+      >
+        {loading ? (
+          <ActivityIndicator color="#fff" />
+        ) : (
+          <Text style={styles.verifyButtonText}>Verify Email</Text>
+        )}
+      </TouchableOpacity>
 
-      {timer === 0 && !loading && (
-        <Button
-          title="Resend OTP"
-          onPress={handleResendOTP}
-        />
-      )}
-    </View>
+      <TouchableOpacity
+        style={[
+          styles.resendButton,
+          (timer > 0 || resending) && { opacity: 0.5 }
+        ]}
+        onPress={handleResendOTP}
+        disabled={timer > 0 || resending}
+      >
+        {resending ? (
+          <ActivityIndicator />
+        ) : (
+          <Text style={styles.resendButtonText}>
+            {timer > 0 ? `Resend in ${formatTime(timer)}` : 'Resend Code'}
+          </Text>
+        )}
+      </TouchableOpacity>
+    </KeyboardAvoidingView>
   );
-};
+}
 
 const styles = StyleSheet.create({
   container: {
     flex: 1,
+    backgroundColor: '#EFE6DD', // earthy background
+    alignItems: 'center',
     justifyContent: 'center',
-    padding: 16,
-    backgroundColor: '#fff',
+    padding: 20,
   },
-  title: {
-    fontSize: 24,
+  backButton: {
+    position: 'absolute',
+    top: 50,
+    left: 20,
+    zIndex: 1,
+  },
+  image: {
+    width: 80,
+    height: 80,
+    marginBottom: 20,
+  },
+  heading: {
+    fontSize: 22,
     fontWeight: 'bold',
-    marginBottom: 16,
-    textAlign: 'center',
+    color: '#5A4322', // dark brown heading
+    marginBottom: 10,
+    marginTop: 10,
+  },
+  timer: {
+    fontSize: 16,
+    marginBottom: 20,
+    color: '#7D6651', // muted brown
   },
   otpContainer: {
     flexDirection: 'row',
-    justifyContent: 'space-evenly',
-    marginVertical: 20,
+    justifyContent: 'space-between',
+    width: '80%',
+    marginBottom: 20,
   },
   otpInput: {
-    width: 40,
-    height: 40,
-    borderColor: '#ccc',
+    width: 45,
+    height: 55,
     borderWidth: 1,
-    borderRadius: 6,
+    borderColor: '#C6B49E', // clay-beige border
+    borderRadius: 10,
     textAlign: 'center',
-    fontSize: 18,
+    fontSize: 20,
+    backgroundColor: '#FFF8F0', // very soft cream
+    color: '#5A4322',
   },
-  error: {
-    color: 'red',
-    marginBottom: 10,
+  verifyButton: {
+    backgroundColor: '#A67B5B', // earthy brown-orange
+    paddingVertical: 14,
+    paddingHorizontal: 40,
+    borderRadius: 30,
+    marginBottom: 20,
+    marginTop: 10,
+    elevation: 2,
+  },
+  verifyButtonText: {
+    color: '#FFFFFF',
+    fontSize: 16,
+    fontWeight: 'bold',
+  },
+  resendButton: {
+    marginTop: 10,
+  },
+  resendButtonText: {
+    color: '#7D6651', // muted brown
+    fontSize: 14,
+    textDecorationLine: 'underline',
   },
 });
-
-export default OTPVerifyScreen;

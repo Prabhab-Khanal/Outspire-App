@@ -6,11 +6,7 @@ import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import * as Location from 'expo-location';
 import * as Haptics from 'expo-haptics';
 import { AnimatedCircularProgress } from 'react-native-circular-progress';
-import * as Linking from 'expo-linking';
-import {
-  sendSOS,
-  getEmergencyContacts,
-} from '../../services/sosService';
+import { sendSOS } from '../../services/sosService'; // ✅ Update this path as needed
 
 export default function SosScreen() {
   const navigation = useNavigation();
@@ -67,28 +63,29 @@ export default function SosScreen() {
     try {
       const { status } = await Location.requestForegroundPermissionsAsync();
       if (status !== 'granted') {
-        Alert.alert('Permission Denied', 'Location access required.');
+        Alert.alert('Permission Denied', 'Location access is required to send SOS.');
         return;
       }
 
       const location = await Location.getCurrentPositionAsync({});
-      const geocode = await Location.reverseGeocodeAsync(location.coords);
-      const placeName = geocode?.[0]?.name || 'Unknown location';
+      const { latitude, longitude } = location.coords;
 
-      // Send to backend
-      await sendSOS({
-        latitude: location.coords.latitude,
-        longitude: location.coords.longitude,
-        place_name: placeName,
-      });
+      const geocode = await Location.reverseGeocodeAsync({ latitude, longitude });
+      const place = geocode[0]?.name || geocode[0]?.street || 'Unknown Place';
 
-      Alert.alert('🚨 SOS Sent', 'Your location was shared.');
+      const timestamp = new Date().toISOString();
 
-      const contacts = await getEmergencyContacts();
-      for (const contact of contacts) {
-        Linking.openURL(`tel:${contact.phone}`);
-        await new Promise((res) => setTimeout(res, 3000));
-      }
+      const payload = {
+        latitude,
+        longitude,
+        place,
+        timestamp,
+      };
+
+      console.log('📤 Sending SOS:', payload);
+      await sendSOS(payload);
+
+      Alert.alert('🚨 SOS Sent', 'Your emergency location and time were sent successfully.');
     } catch (err) {
       console.log('❌ SOS error:', err);
       Alert.alert('Error', 'Failed to send SOS.');
@@ -133,13 +130,6 @@ export default function SosScreen() {
 
       {sosCancelled && <Text style={styles.cancelledMsg}>🛑 SOS Cancelled</Text>}
       {sosSent && <Text style={styles.helpMsg}>🚨 SOS Sent! Help is on the way.</Text>}
-
-      <TouchableOpacity
-        onPress={() => navigation.navigate('EmergencyContacts')}
-        style={styles.manageContactsButton}
-      >
-        <Text style={styles.manageContactsText}>Manage Emergency Contacts</Text>
-      </TouchableOpacity>
     </View>
   );
 }
@@ -159,8 +149,4 @@ const styles = StyleSheet.create({
   sendNowText: { color: 'white', fontSize: 16, fontWeight: 'bold' },
   cancelledMsg: { marginTop: 20, fontSize: 18, color: '#dc3545', fontWeight: 'bold' },
   helpMsg: { marginTop: 20, fontSize: 18, color: '#28a745', fontWeight: 'bold' },
-  manageContactsButton: {
-    marginTop: 30, backgroundColor: '#007bff', padding: 12, borderRadius: 8, width: 220, alignItems: 'center',
-  },
-  manageContactsText: { color: 'white', fontWeight: 'bold' },
 });

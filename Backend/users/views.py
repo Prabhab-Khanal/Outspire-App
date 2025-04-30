@@ -1,424 +1,556 @@
 from django.core.mail import send_mail
 from django.core.cache import cache
+from django.conf import settings
+from django.forms import ValidationError
+from django.shortcuts import get_object_or_404
+from django.contrib.auth.hashers import make_password
 from rest_framework.views import APIView
+from rest_framework.generics import RetrieveAPIView, ListAPIView
 from rest_framework.response import Response
 from rest_framework import status
+from rest_framework.permissions import IsAuthenticated, AllowAny
 from rest_framework_simplejwt.tokens import RefreshToken
-from django.conf import settings
-import random
-from rest_framework.permissions import IsAuthenticated
-from google.oauth2 import id_token
-from google.auth.transport.requests import Request
 
 from .models import User, UserPreference, EmergencyContact
-from .serializers import RegisterSerializer, OTPVerifySerializer, LoginSerializer, ProfileSerializer, PreferenceSerializer, EmergencyContactSerializer
+from .serializers import (
+    RegisterSerializer, OTPVerifySerializer, LoginSerializer, UserPreferenceSerializer, UserProfileSerializer,
+    UserProfileUpdateSerializer, PreferenceSerializer, UserPreferenceUpdateSerializer,
+    EmergencyContactSerializer, EmergencyContactUpdateSerializer, 
+    CompleteUserProfileUpdateSerializer, PublicUserListSerializer,
+    PasswordResetRequestSerializer, ResetPasswordSerializer, ChangeEmailRequestSerializer
+)
+from google.oauth2 import id_token
+from google.auth.transport import requests as google_requests
+import random
 
-OTP_EXPIRATION_TIME = 30000  # 5 minutes expiration time for OTP
 
-# User Registration with OTP
 class RegisterUserView(APIView):
+    permission_classes = [AllowAny]
+
     def post(self, request):
-        data = request.data
-        serializer = RegisterSerializer(data=data)
-
+        serializer = RegisterSerializer(data=request.data)
         if serializer.is_valid():
-            # Create the user
-            user = serializer.save()
-            user.is_email_verified = False  # Email is not verified yet
-            user.save()
-
-            # Generate OTP
+            user = serializer.save(is_email_verified=False, is_profile_complete = True)
+            
+            # Generate OTP and store it in cache
             otp = str(random.randint(100000, 999999))
-            otp_key = f"otp_{user.email}"
-            cache.set(otp_key, otp, timeout=OTP_EXPIRATION_TIME)
+            cache.set(f"otp_register_{user.email}", otp, timeout=300)
+            print ('the  otp for register is' ,otp)
+            print('the cache stored otp is', )
 
-            # Send OTP email
+            # Send OTP via email
             send_mail(
-                subject="Your OTP Code for Registration",
+                subject="Verify Your Email - OTP Code",
                 message=f"Your OTP code is: {otp}",
                 from_email=settings.DEFAULT_FROM_EMAIL,
                 recipient_list=[user.email],
                 fail_silently=False,
             )
 
-            return Response({"message": "Registration successful. Please verify your email with the OTP."}, status=status.HTTP_201_CREATED)
-        
+            return Response({
+                "message": "Registration successful. Please verify your email with the OTP.",
+                "email": user.email
+            }, status=status.HTTP_201_CREATED)
+
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
-# OTP Verification
+
 class VerifyOTPView(APIView):
+    permission_classes = [AllowAny]
+
     def post(self, request):
-        # Ensure you get the correct OTP from the request data
-        email = request.data.get('email')
-        otp = request.data.get('otp')
-        otp_type = request.data.get('otp_type')
+        payload  = request.data.get("data", request.data)
+        email    = payload.get("email")
+        otp      = payload.get("otp")
+        otp_type = payload.get("otp_type")
 
-        # Construct the cache key with email and OTP type
-        otp_key = f"otp_{email}"
+        # Debug inputs
+        print(f"[VerifyOTP] Received data: email={email!r}, otp={otp!r}, otp_type={otp_type!r}")
 
-        # Debugging the cache key and stored OTP
-        print(f"Verifying OTP for {email} with key {otp_key}")
-        
-        # Fetch the OTP from cache using the same key
-        stored_otp = cache.get(otp_key)
+        key = f"otp_{otp_type}_{email}"
+        print(f"[VerifyOTP] Computed cache key: {key!r}")
 
-        # Debugging: Check what's retrieved from cache
-        print(f"Stored OTP: {stored_otp}")
+        stored_otp = cache.get(key)
+        print(f"[VerifyOTP] Stored OTP from cache: {stored_otp!r}")
 
         if stored_otp == otp:
-            # OTP matches, mark the email as verified
-            user = User.objects.get(email=email)
-            user.is_email_verified = True
-            user.save()
+            print("[VerifyOTP] OTP matches stored value")
+            try:
+                user = User.objects.get(email=email)
+                print(f"[VerifyOTP] Found user: {user!r}")
 
-            # Clear the OTP from cache
-            cache.delete(otp_key)
+                if otp_type == "register":
+                    user.is_email_verified = True
+                    print("[VerifyOTP] Marking user email as verified")
 
-            return Response({"message": "OTP verified successfully. Your email is now verified."}, status=status.HTTP_200_OK)
-        else:
-            return Response({"error": "Invalid or expired OTP."}, status=status.HTTP_400_BAD_REQUEST)
+                user.save()
+                print("[VerifyOTP] User saved successfully")
+
+                cache.delete(key)
+                print(f"[VerifyOTP] Deleted OTP from cache: {key!r}")
+
+                return Response({"message": "OTP verified successfully."}, status=200)
+            except User.DoesNotExist:
+                print(f"[VerifyOTP] No user found with email: {email!r}")
+                return Response({"error": "User not found."}, status=404)
+
+        # OTP did not match
+        print("[VerifyOTP] Invalid or expired OTP")
+        return Response({"error": "Invalid or expired OTP."}, status=400)
 
 
 
-
-
-# User Login
 class LoginUserView(APIView):
+    permission_classes = [AllowAny]
+
     def post(self, request):
         data = request.data
-        serializer = LoginSerializer(data=data)
+        identifier = data.get("username_or_email")
+        password = data.get("password")
 
-        if serializer.is_valid():
-            identifier = data.get("username_or_email")
-            password = data.get("password")
+        user = User.objects.filter(email=identifier).first() or User.objects.filter(username=identifier).first()
 
-            user = User.objects.filter(email=identifier).first() or User.objects.filter(username=identifier).first()
+        if user and user.check_password(password):
+            if not user.is_email_verified:
+                new_otp = f"{random.randint(0, 999999):06d}"
 
-            if user and user.check_password(password):
-                # If email is not verified, redirect to OTP verify page
-                if not user.is_email_verified:
-                    return Response({
-                        "error": "Email not verified. Please verify your email.",
-                        "redirect_to_otp": True,  # Flag to indicate frontend should navigate to OTP screen
-                        "email": user.email  # Send email for OTP verification purpose
-                    }, status=status.HTTP_400_BAD_REQUEST)
-                
-                # If profile or preferences are incomplete, send flags
+                # cache it under the same key your VerifyOTPView expects
+                cache.set(f"otp_register_{user.email}", new_otp, timeout=300)
+
+                # send it right away
+                send_mail(
+                "Your verification code",
+                f"Your OTP is {new_otp}",
+                settings.DEFAULT_FROM_EMAIL,
+                [user.email],
+                fail_silently=True
+                )
+
+                # now return exactly as before
                 return Response({
-                    "access_token": str(RefreshToken.for_user(user).access_token),
-                    "refresh_token": str(RefreshToken.for_user(user)),
-                    "is_email_verified": user.is_email_verified,
-                    "is_profile_complete": user.is_profile_complete,
-                    "is_preference_complete": user.is_preference_complete,
-                    "is_emergencycontact_complete": user.is_emergencycontact_complete,
-                    'role': user.role,
-                })
+                "error": "Email not verified. Please verify your email.",
+                "redirect_to_otp": True,
+                "email": user.email
+                }, status=400)
 
-            return Response({"error": "Invalid credentials"}, status=status.HTTP_400_BAD_REQUEST)
+            refresh = RefreshToken.for_user(user)
+            return Response({
+                "message": "Login successful.",
+                "access_token": str(refresh.access_token),
+                "refresh_token": str(refresh),
+                "user_id": user.user_id,
+                "username": user.username,
+                "role": user.role,
+                "is_profile_complete": user.is_profile_complete,
+                "is_preference_complete": user.is_preference_complete,
+                "is_emergencycontact_complete": user.is_emergencycontact_complete,
+                "premium":user.is_premium,
+            }, status=200)
 
-        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+        return Response({"error": "Invalid credentials."}, status=400)
 
 
+from google.oauth2 import id_token
+from google.auth.transport import requests as google_requests
+from rest_framework_simplejwt.tokens import RefreshToken
 
-
-# Create or Update Profile
-class CreateProfileView(APIView):
-    permission_classes = [IsAuthenticated]
+class GoogleLoginView(APIView):
+    permission_classes = [AllowAny]
 
     def post(self, request):
-        # Check if the user already has a profile
-        if hasattr(request.user, 'profile'):
-            return Response({"error": "Profile already exists."}, status=status.HTTP_400_BAD_REQUEST)
+        token = request.data.get('google_id_token')
 
-        serializer = ProfileSerializer(data=request.data)
+        if not token:
+            return Response({"error": "Google ID token is required."}, status=400)
+
+        try:
+            idinfo = id_token.verify_oauth2_token(token, google_requests.Request(), settings.GOOGLE_CLIENT_ID)
+
+            google_id_val = idinfo['sub']
+            email = idinfo['email']
+            username = idinfo.get('name', email.split('@')[0])  #
+
+            user, created = User.objects.get_or_create(
+                email=email,
+                defaults={
+                    'username': username,
+                    'google_id': google_id_val,
+                    'is_email_verified': True,
+                    'role': 'Regular'
+                }
+            )
+
+            # Prevent hybrid conflict: if user exists with email but no google_id
+            if not created and user.google_id is None:
+                return Response({
+                    "error": "This email is already registered with a password login."
+                }, status=400)
+
+            # Issue tokens
+            refresh = RefreshToken.for_user(user)
+
+            return Response({
+                "message": "Google login successful.",
+                "access_token": str(refresh.access_token),
+                "refresh_token": str(refresh),
+                "user_id": user.user_id,
+                "username": user.username,
+                "role": user.role,
+                "is_profile_complete": user.is_profile_complete,
+                "is_preference_complete": user.is_preference_complete,
+                "is_emergencycontact_complete": user.is_emergencycontact_complete,
+            })
+
+        except ValueError:
+            return Response({"error": "Invalid Google ID token."}, status=400)
+
+
+class ForgotPasswordView(APIView):
+    permission_classes = [AllowAny]
+
+    def post(self, request):
+        serializer = PasswordResetRequestSerializer(data=request.data)
         if serializer.is_valid():
-            # Save the profile
-            serializer.save(user=request.user)
-            request.user.is_profile_complete = True  # Mark profile as complete
-            request.user.save()
-            return Response({"message": "Profile created successfully."}, status=status.HTTP_201_CREATED)
-        
-        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+            email = serializer.validated_data['email']
+
+            try:
+                User.objects.get(email=email)
+                otp = str(random.randint(100000, 999999))
+                cache.set(f"otp_reset_{email}", otp, timeout=300)
+
+                send_mail(
+                    subject="Reset Your Password - OTP",
+                    message=f"Your OTP code is: {otp}",
+                    from_email=settings.DEFAULT_FROM_EMAIL,
+                    recipient_list=[email],
+                    fail_silently=False,
+                )
+
+                return Response({"message": "OTP sent to your email."}, status=200)
+
+            except User.DoesNotExist:
+                return Response({"error": "No user found with this email."}, status=404)
+
+        return Response(serializer.errors, status=400)
 
 
-# Update Profile
-class UpdateProfileView(APIView):
+class ResetPasswordView(APIView):
+    permission_classes = [AllowAny]
+
+    def post(self, request):
+        serializer = ResetPasswordSerializer(data=request.data)
+        if serializer.is_valid():
+            email = serializer.validated_data["email"]
+            otp = serializer.validated_data["otp"]
+            key = f"otp_reset_{email}"
+            stored_otp = cache.get(key)
+
+            if stored_otp == otp:
+                try:
+                    user = User.objects.get(email=email)
+                    user.set_password(serializer.validated_data["new_password"])
+                    user.save()
+                    cache.delete(key)
+                    return Response({"message": "Password reset successful."}, status=200)
+                except User.DoesNotExist:
+                    return Response({"error": "User not found."}, status=404)
+
+            return Response({"error": "Invalid or expired OTP."}, status=400)
+
+        return Response(serializer.errors, status=400)
+
+
+class ResendOTPView(APIView):
+    permission_classes = [AllowAny]
+
+    def post(self, request):
+        email    = request.data.get("email")
+        otp_type = request.data.get("otp_type")
+
+        if not email or not otp_type:
+            return Response(
+                {"error": "Email and otp_type are required."},
+                status=400
+            )
+
+        # 1) Generate a new 6-digit numeric OTP
+        new_otp = f"{random.randint(0, 999999):06d}"
+
+        # 2) Cache it for, say, 5 minutes
+        key = f"otp_{otp_type}_{email}"
+        cache.set(key, new_otp, timeout=300)
+
+        # 3) Send it via email
+        subject = "Your Verification Code"
+        message = f"Your verification code is: {new_otp}"
+        from_email = settings.DEFAULT_FROM_EMAIL
+        try:
+            send_mail(subject, message, from_email, [email])
+        except Exception as e:
+            print("Send mail error:", str(e))  # Log error in server
+            return Response({"error": "Failed to send email."}, status=500)
+
+        return Response(
+            {"message": "OTP resent successfully."},
+            status=200
+        )
+
+
+
+
+
+class GetProfileView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        serializer = UserProfileSerializer(request.user)
+        return Response(serializer.data, status=200)
+
+
+class UpdateUserProfileView(APIView):
     permission_classes = [IsAuthenticated]
 
     def put(self, request):
-        profile = getattr(request.user, 'profile', None)
-        if not profile:
-            return Response({"error": "Profile not found."}, status=status.HTTP_404_NOT_FOUND)
-
-        serializer = ProfileSerializer(profile, data=request.data, partial=True)
+        serializer = UserProfileUpdateSerializer(request.user, data=request.data, partial=True)
         if serializer.is_valid():
             serializer.save()
-            return Response({"message": "Profile updated successfully."}, status=status.HTTP_200_OK)
-        
-        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+            return Response({"message": "Profile updated successfully."}, status=200)
+        return Response(serializer.errors, status=400)
 
-
-# Create Preferences
-class CreatePreferenceView(APIView):
-    permission_classes = [IsAuthenticated]
+class CreatePreferenceView(APIView): 
 
     def post(self, request):
-        # Check if the user already has preferences
-        if hasattr(request.user, 'preference'):
-            return Response({"error": "Preferences already exist."}, status=status.HTTP_400_BAD_REQUEST)
-
         serializer = PreferenceSerializer(data=request.data)
         if serializer.is_valid():
-            # Save the preferences
-            serializer.save(user=request.user)
-            request.user.is_preference_complete = True  # Mark preferences as complete
-            request.user.save()
-            return Response({"message": "Preferences created successfully."}, status=status.HTTP_201_CREATED)
+            serializer.save()
+            return Response({"message": "Preferences created successfully."}, status=201)
+        return Response(serializer.errors, status=400)
 
-        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+class GetUserPreferenceView(APIView):
+    permission_classes = [IsAuthenticated]
 
+    def get(self, request):
+        try:
+            preference = request.user.preference  # Assuming OneToOneField from user to preference
+            serializer = UserPreferenceSerializer(preference)
+            return Response(serializer.data, status=200)
+        except UserPreference.DoesNotExist:
+            return Response({"error": "Preferences not found."}, status=404)
 
-# Update Preferences
-class UpdatePreferenceView(APIView):
+class UpdateUserPreferenceView(APIView):
     permission_classes = [IsAuthenticated]
 
     def put(self, request):
-        preference = getattr(request.user, 'preference', None)
-        if not preference:
-            return Response({"error": "Preferences not found."}, status=status.HTTP_404_NOT_FOUND)
-
-        serializer = PreferenceSerializer(preference, data=request.data, partial=True)
-        if serializer.is_valid():
-            serializer.save()
-            return Response({"message": "Preferences updated successfully."}, status=status.HTTP_200_OK)
-
-        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
-
+        try:
+            preference = request.user.preference  # OneToOne field
+            serializer = UserPreferenceUpdateSerializer(preference, data=request.data, partial=True)
+            if serializer.is_valid():
+                serializer.save()
+                return Response({"message": "Preferences updated successfully."}, status=200)
+            return Response(serializer.errors, status=400)
+        except UserPreference.DoesNotExist:
+            return Response({"error": "Preferences not found."}, status=404)
 
 
+# views.py
+# views.py
 class CreateEmergencyContactView(APIView):
     permission_classes = [IsAuthenticated]
 
     def post(self, request):
-        user = request.user  # Get the logged-in user
-
-        # Check if the user is Premium or Regular
-        if user.role == 'Regular':
-            limit = 3  # Regular users can only have up to 3 emergency contacts
-        else:
-            limit = 5  # Premium users can have up to 5 emergency contacts
-
-        # Count existing emergency contacts for the user
-        existing_contacts = EmergencyContact.objects.filter(user=user).count()
-
-        if existing_contacts >= limit:
-            # If user has reached the limit, prompt to upgrade
-            return Response(
-                {"error": f"You have reached the limit of {limit} emergency contacts. Upgrade to Premium to add more."},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-
-        # Serialize and save new emergency contact
+        print(f"Received data: {request.data}")  # Log the request data
         serializer = EmergencyContactSerializer(data=request.data)
+
         if serializer.is_valid():
-            serializer.save(user=user)
-            return Response({"message": "Emergency contact added successfully."}, status=status.HTTP_201_CREATED)
+            serializer.save(user=request.user)
+            return Response({"message": "Emergency contact added."}, status=201)
         
-        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        print(f"Validation errors: {serializer.errors}")  # Log validation errors
+        return Response(serializer.errors, status=400)
 
 
 class UpdateEmergencyContactView(APIView):
     permission_classes = [IsAuthenticated]
 
     def put(self, request):
-        user = request.user  # Get the logged-in user
+        contact_id = request.data.get('id')
 
-        # Check if the user is Premium or Regular
-        if user.role == 'Regular':
-            limit = 3  # Regular users can only have up to 3 emergency contacts
-        else:
-            limit = 5  # Premium users can have up to 5 emergency contacts
-
-        # Check if the user already has the maximum allowed contacts
-        if EmergencyContact.objects.filter(user=user).count() >= limit:
-            if user.role == 'Regular':
-                # If the user has 3 contacts and tries to update/add more, prompt to upgrade
-                return Response(
-                    {"error": f"You have reached the limit of {limit} emergency contacts. Upgrade to Premium to add more."},
-                    status=status.HTTP_400_BAD_REQUEST
-                )
-
-        # Update the existing contact (for users with less than the limit)
-        contact_id = request.data.get('id')  # Assuming contact id is sent for update
         try:
-            contact = EmergencyContact.objects.get(id=contact_id, user=user)
+            contact = EmergencyContact.objects.get(id=contact_id, user=request.user)
+            serializer = EmergencyContactSerializer(contact, data=request.data, partial=True)
+            if serializer.is_valid():
+                serializer.save()
+                return Response({"message": "Emergency contact updated successfully."}, status=200)
+            return Response({"errors": serializer.errors}, status=400)
         except EmergencyContact.DoesNotExist:
-            return Response({"error": "Emergency contact not found."}, status=status.HTTP_404_NOT_FOUND)
+            return Response({"error": "Emergency contact not found."}, status=404)
 
-        # Serialize and update the emergency contact
-        serializer = EmergencyContactSerializer(contact, data=request.data, partial=True)
-        if serializer.is_valid():
-            serializer.save()
-            return Response({"message": "Emergency contact updated successfully."}, status=status.HTTP_200_OK)
+class GetEmergencyContactView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        print("🚀 Fetching emergency contact for user:", request.user.user_id)  # Log the user ID for the request
         
-        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        contacts = EmergencyContact.objects.filter(user=request.user)
+        if contacts.exists():
+            serializer = EmergencyContactSerializer(contacts, many=True)
+            return Response(serializer.data)
+        else:
+            return Response({"error": "No emergency contacts found"}, status=404)
+
+        
 
 
+class DeleteEmergencyContactView(APIView):
+    permission_classes = [IsAuthenticated]
 
-# Forgot Password: Generate OTP to Reset Password
-class ForgotPasswordView(APIView):
-    def post(self, request):
-        email = request.data.get("email")
-        if not email:
-            return Response({"error": "Email is required."}, status=status.HTTP_400_BAD_REQUEST)
+    def delete(self, request):
+        contact_id = request.data.get('contact_id')  # Make sure 'contact_id' is being passed
 
-        # Check if user exists
+        if not contact_id:
+            return Response({"error": "Contact ID is required."}, status=400)
+
         try:
-            user = User.objects.get(email=email)
-        except User.DoesNotExist:
-            return Response({"error": "User not found."}, status=status.HTTP_404_NOT_FOUND)
+            # Fetch the emergency contact by ID and ensure it belongs to the current user
+            contact = EmergencyContact.objects.get(id=contact_id, user=request.user)
+            contact.delete()  # Delete the contact from the database
+            return Response({"message": "Emergency contact deleted successfully."}, status=200)
+        except EmergencyContact.DoesNotExist:
+            return Response({"error": "Emergency contact not found."}, status=404)
 
-        # Generate OTP for password reset
-        otp = str(random.randint(100000, 999999))
-        otp_key = f"otp_reset_{email}"
-        cache.set(otp_key, otp, timeout=OTP_EXPIRATION_TIME)
+class PublicUserProfileView(RetrieveAPIView):
+    permission_classes = [AllowAny]
 
-        # Send OTP to user's email
-        send_mail(
-            subject="Your OTP Code for Password Reset",
-            message=f"Your OTP code is: {otp}",
-            from_email=settings.DEFAULT_FROM_EMAIL,
-            recipient_list=[email],
-            fail_silently=False,
+    def get(self, request, username):
+        user = get_object_or_404(User, username=username)
+        serializer = UserProfileSerializer(user)
+        return Response(serializer.data)
+
+
+
+class UserListView(ListAPIView):
+    permission_classes = [AllowAny]
+    serializer_class = PublicUserListSerializer
+
+    def get_queryset(self):
+        search = self.request.query_params.get('search')
+        if search:
+            return User.objects.filter(username__icontains=search)
+        return User.objects.all()
+
+
+from .models import Follow
+
+class FollowToggleView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        target_username = request.data.get("username")
+        target_user = get_object_or_404(User, username=target_username)
+
+        if target_user == request.user:
+            return Response({"error": "You cannot follow yourself."}, status=400)
+
+        follow_obj, created = Follow.objects.get_or_create(
+            follower=request.user,
+            following=target_user
         )
 
-        return Response({"message": "OTP sent successfully to your email."}, status=status.HTTP_200_OK)
+        if not created:
+            follow_obj.delete()
+            return Response({"message": "Unfollowed."})
+        else:
+            return Response({"message": "Followed."})
 
 
-# Forgot Password: Verify OTP and Reset Password
-class ResetPasswordView(APIView):
+class FollowStatusView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        username = request.query_params.get("username")
+        target_user = get_object_or_404(User, username=username)
+
+        is_following = Follow.objects.filter(follower=request.user, following=target_user).exists()
+        return Response({"is_following": is_following}, status=200)
+
+
+
+
+class FollowedUsersListAPIView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        follows = Follow.objects.filter(follower=request.user)
+        users = [f.following for f in follows]
+        serializer = PublicUserListSerializer(users, many=True, context={"request": request})
+        return Response(serializer.data)
+
+
+
+class CheckUsernameEmailView(APIView):
+    permission_classes = [AllowAny]
+
     def post(self, request):
-        serializer = OTPVerifySerializer(data=request.data)
+        email = request.data.get('email', '').lower()
+        username = request.data.get('username', '')
 
-        if serializer.is_valid():
-            email = serializer.validated_data['email']
-            otp = serializer.validated_data['otp']
-            otp_type = serializer.validated_data['otp_type']
+        errors = {}
 
-            stored_otp = cache.get(f"otp_{otp_type}_{email}")
-            if stored_otp == otp:
-                # Reset Password
-                new_password = request.data.get("new_password")
-                user = User.objects.get(email=email)
-                user.set_password(new_password)
-                user.save()
+        if User.objects.filter(email=email).exists():
+            errors['email'] = 'Email is already registered.'
 
-                # Clear OTP from cache
-                cache.delete(f"otp_{otp_type}_{email}")
+        if User.objects.filter(username=username).exists():
+            errors['username'] = 'Username is already taken.'
 
-                return Response({"message": "Password reset successfully."}, status=status.HTTP_200_OK)
-
-            return Response({"error": "Invalid or expired OTP."}, status=status.HTTP_400_BAD_REQUEST)
-
-        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        if errors:
+            return Response(errors, status=status.HTTP_400_BAD_REQUEST)
+        
+        return Response({"message": "Email and Username are available."}, status=status.HTTP_200_OK)
+    
 
 
-from google.oauth2 import id_token
-from google.auth.transport.requests import Request
+class CheckPhoneNumberView(APIView):
+    permission_classes = [AllowAny]
 
-# Google Login
-class GoogleLoginView(APIView):
     def post(self, request):
-        # Google ID token
-        google_id_token = request.data.get('google_id_token')
+        phone_number = request.data.get('phone_number', '')
 
-        if not google_id_token:
-            return Response({"error": "Google ID token is required."}, status=status.HTTP_400_BAD_REQUEST)
+        if User.objects.filter(phone_number=phone_number).exists():
+            return Response({"phone_number": "Phone number is already registered."}, status=status.HTTP_400_BAD_REQUEST)
 
-        try:
-            # Verify Google ID token
-            idinfo = id_token.verify_oauth2_token(google_id_token, Request(), settings.GOOGLE_CLIENT_ID)
-
-            # Check if the ID token is valid and extract the email
-            google_id = idinfo['sub']
-            email = idinfo['email']
-            username = idinfo.get('name', email.split('@')[0])  # Default username is email before '@'
-
-            # Check if user exists
-            user, created = User.objects.get_or_create(
-                email=email,
-                defaults={"username": username, "google_id": google_id, "is_email_verified": True}
-            )
-
-            # Create JWT tokens for the user
-            refresh = RefreshToken.for_user(user)
-            return Response({
-                "access_token": str(refresh.access_token),
-                "refresh_token": str(refresh),
-                "message": "Google login successful"
-            })
-
-        except ValueError:
-            return Response({"error": "Invalid Google ID token."}, status=status.HTTP_400_BAD_REQUEST)
+        return Response({"message": "Phone number is available."}, status=status.HTTP_200_OK)
 
 
+class ResetPasswordAfterOTPView(APIView):
+    permission_classes = [AllowAny]
 
-
-from django.core.cache import cache
-from django.core.mail import send_mail
-import random
-from rest_framework.response import Response
-from rest_framework import status
-
-# OTP Generation and Cache Storage
-class GenerateOTPForEmailVerificationView(APIView):
     def post(self, request):
-        # Check if the email exists
-        email = request.data.get('email')
+        print(request.data)
+        email = request.data.get('email', '').strip().lower()
+        new_password = request.data.get('new_password', '').strip()
+
         if not email:
-            return Response({"error": "Email is required."}, status=status.HTTP_400_BAD_REQUEST)
+            return Response({"error": "Email field is required."}, status=status.HTTP_400_BAD_REQUEST)
+
+        if not new_password:
+            return Response({"error": "New password field is required."}, status=status.HTTP_400_BAD_REQUEST)
+
+        if len(new_password) < 8:
+            return Response({"error": "Password must be at least 8 characters long."}, status=status.HTTP_400_BAD_REQUEST)
 
         try:
             user = User.objects.get(email=email)
         except User.DoesNotExist:
-            return Response({"error": "User with this email does not exist."}, status=status.HTTP_404_NOT_FOUND)
-
-        # Check if the email is already verified
-        if user.is_email_verified:
-            return Response({"message": "Email is already verified."}, status=status.HTTP_200_OK)
-
-        # Generate OTP
-        otp = str(random.randint(100000, 999999))  # Generate a 6-digit OTP
-        otp_key = f"otp_{user.email}"  # Cache key specific to the email
-        
-        try:
-            # Store OTP in cache with the correct key (otp_key)
-            cache.set(otp_key, otp, timeout=OTP_EXPIRATION_TIME)
-
-            # Debugging line: retrieve the OTP using the correct key (otp_key)
-            stored_otp = cache.get(otp_key)
-            
-            print(f"OTP stored for {user.email}: {stored_otp}")  # Print the stored OTP
-
+            return Response({"error": "No user found with this email."}, status=status.HTTP_404_NOT_FOUND)
         except Exception as e:
-            print(f"Cache error: {str(e)}")  # Log any cache errors
+            return Response({"error": f"Server error while fetching user: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
-
-
-        # Send OTP to user's email
-        send_mail(
-            subject="Your OTP Code for Email Verification",
-            message=f"Your OTP code for email verification is: {otp}",
-            from_email=settings.DEFAULT_FROM_EMAIL,
-            recipient_list=[user.email],
-            fail_silently=False,
-        )
-
-        # Return response indicating OTP was sent
-        return Response({
-            "message": "OTP sent successfully to your email.",
-            "redirect_to_otp": True,
-            "email": user.email,
-            "otp_type": "register"  # OTP type is register for email verification
-        }, status=status.HTTP_200_OK)
-
+        try:
+            user.password = make_password(new_password)
+            user.save()
+            return Response({"message": "Password reset successful."}, status=status.HTTP_200_OK)
+        except ValidationError as ve:
+            return Response({"error": f"Password validation error: {ve.message}"}, status=status.HTTP_400_BAD_REQUEST)
+        except Exception as e:
+            return Response({"error": f"Server error while resetting password: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)

@@ -1,12 +1,20 @@
-from django.urls import path, include
-from rest_framework.routers import DefaultRouter
-from .views import PostViewSet
-
-# Set up the DefaultRouter
-router = DefaultRouter()
-router.register(r'posts', PostViewSet)  # This will automatically include the custom actions like 'like', 'comment', etc.
-
+from django.urls import path
+from .views import (
+    GetSinglePostAPIView,
+    PostListAPIView,
+    PostCreateAPIView,
+    PostImageUploadView,
+)
 
 urlpatterns = [
-    path('api/', include(router.urls)),  # API endpoint for posts and comments
+    # 📚 List all posts (GET)
+    path('posts/', PostListAPIView.as_view(), name='post-list'),
+
+    # 📝 Create a new post (POST)
+    path('posts/create/', PostCreateAPIView.as_view(), name='post-create'),
+
+    # 📷 Upload images for a post (POST)
+    path('posts/<int:post_id>/upload-image/', PostImageUploadView.as_view(), name='post-image-upload'),
+
+    path('post/<int:post_id>/', GetSinglePostAPIView.as_view(), name='get_single_post'),
 ]

@@ -2,6 +2,15 @@
   "expo": {
     "name": "Frontend",
     "slug": "Frontend",
-    "version": "1.0.0"
+    "version": "1.0.0",
+    "permissions": [
+      "CAMERA",
+      "CAMERA_ROLL"
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "9c51dc61-ad6f-436a-af4c-6251178032b1"
+      }
+    }
   }
 }

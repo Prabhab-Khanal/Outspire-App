@@ -18,6 +18,7 @@ class UserManager(BaseUserManager):
             raise ValueError("Email is required")
         if not username:
             raise ValueError("Username is required")
+        
 
         email = self.normalize_email(email)
         extra_fields.setdefault('is_active', True)
@@ -26,7 +27,7 @@ class UserManager(BaseUserManager):
 
         user = self.model(username=username, email=email, phone_number=phone_number, **extra_fields)
         if password:
-            user.set_password(password)  # Securely set password
+            user.set_password(password)  
         user.save(using=self._db)
         return user
 
@@ -46,10 +47,10 @@ class User(AbstractBaseUser, PermissionsMixin):
     middle_name = models.CharField(max_length=50, blank=True, null=True)
     last_name = models.CharField(max_length=50)
     email = models.EmailField(unique=True)
-    phone_number = models.CharField(max_length=15, unique=True, blank=True, null=True)
+    phone_number = models.CharField(max_length=15, unique=True)
 
     # Profile Fields
-    profile_picture = models.ImageField(upload_to='profile_pictures/', blank=True, null=True)
+    profile_picture = models.ImageField(upload_to='profile_pictures/', blank=True, null=True, default='profile_pictures/' )
     bio = models.TextField(blank=True, null=True)
     date_of_birth = models.DateField(blank=True, null=True)
     gender = models.CharField(max_length=20, choices=[('Male', 'Male'), ('Female', 'Female'), ('Other', 'Other')], blank=True)
@@ -57,6 +58,7 @@ class User(AbstractBaseUser, PermissionsMixin):
 
     # User Role & Verification Status
     role = models.CharField(max_length=20, choices=USER_ROLES, default='Regular')
+    is_premium = models.BooleanField(default=False)
     is_email_verified = models.BooleanField(default=False)
     is_emergencycontact_complete = models.BooleanField(default=False)
     is_profile_complete = models.BooleanField(default=False)
@@ -83,53 +85,72 @@ class User(AbstractBaseUser, PermissionsMixin):
 
 
 class UserPreference(models.Model):
-    """ User Preferences Model for Trail-related Information """
+    """User trail preferences: used for filtering and personalization."""
+    user = models.OneToOneField(User, on_delete=models.CASCADE, related_name='preference')
 
-    user = models.OneToOneField('User', on_delete=models.CASCADE, related_name='preference')
-    
-    # Trail Preferences
     preferred_trail_type = models.CharField(
-        max_length=100, 
+        max_length=100,
         choices=[('Mountain', 'Mountain'), ('Road', 'Road'), ('Coastal', 'Coastal'), ('Forest', 'Forest')],
         blank=True, null=True
-    )  # e.g., Mountain, Road
+    )
     preferred_difficulty = models.CharField(
-        max_length=50, 
+        max_length=50,
         choices=[('Easy', 'Easy'), ('Medium', 'Medium'), ('Hard', 'Hard')],
         blank=True, null=True
-    )  # e.g., Easy, Medium, Hard
+    )
     preferred_terrain = models.CharField(
-        max_length=100, 
+        max_length=100,
         choices=[('Gravel', 'Gravel'), ('Asphalt', 'Asphalt'), ('Snow', 'Snow'), ('Forest', 'Forest')],
         blank=True, null=True
-    )  # e.g., Gravel, Asphalt, Snow, Forest
+    )
     preferred_length = models.CharField(
-        max_length=50, 
+        max_length=50,
         choices=[('Short', 'Short (<5 km)'), ('Medium', 'Medium (5-15 km)'), ('Long', 'Long (>15 km)')],
         blank=True, null=True
-    )  
+    )
 
     def __str__(self):
-        return f"Preference of {self.user.username}"
+        return f"Preferences of {self.user.username}"
+
+# =======================
+# Emergency Contact
+# =======================
 
 class EmergencyContact(models.Model):
-    """ Emergency Contact Model to store user emergency contacts """
-
-    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='emergency_contacts')
+    """Emergency contacts tied to a user, used in SOS triggers."""
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='emergency_contacts')
     contact_name = models.CharField(max_length=100)
     phone_number = models.CharField(max_length=15)
-    relationship = models.CharField(max_length=100, blank=True, null=True)  # Relationship with the user
-    is_primary = models.BooleanField(default=False)  # Flag for the primary emergency contact
+    relationship = models.CharField(max_length=100, blank=True, null=True)
+    is_primary = models.BooleanField(default=False)
 
-    # Optional fields for more details
     email = models.EmailField(blank=True, null=True)
     address = models.CharField(max_length=255, blank=True, null=True)
 
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=['user', 'is_primary'],
+                condition=models.Q(is_primary=True),
+                name='unique_primary_contact'
+            )
+        ]
+
     def __str__(self):
-        return f"{self.contact_name} ({self.relationship})"
+        return f"{self.contact_name} ({self.relationship or 'Contact'})"
+
+# =======================
+# Follow Relationship
+# =======================
+
+class Follow(models.Model):
+    """Social feature to follow other users."""
+    follower = models.ForeignKey(User, on_delete=models.CASCADE, related_name='following')
+    following = models.ForeignKey(User, on_delete=models.CASCADE, related_name='followers')
+    followed_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
-        # Ensure that only one primary contact exists per user
-        constraints = [
-            models.UniqueConstraint(fields=['user', 'is_primary'], condition=models.Q(is_primary=True), name='unique_primary_contact')
-        ]
+        unique_together = ('follower', 'following')
+
+    def __str__(self):
+        return f"{self.follower.username} follows {self.following.username}"

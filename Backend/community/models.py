@@ -1,39 +1,42 @@
 from django.db import models
-from django.conf import settings  # Import settings to reference the custom user model
+from users.models import User
 
-# Model to store user posts
+# 🌟 1. Post model
 class Post(models.Model):
-    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE)  # Use the custom user model
-    content = models.TextField()
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='posts')
+    caption = models.TextField(blank=True)
+    location = models.CharField(max_length=255, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
-
+    likes = models.ManyToManyField(User, related_name='liked_posts', blank=True)
+    is_hidden = models.BooleanField(default=False)
     def __str__(self):
-        return self.content[:50]  # Display first 50 characters of content
+        return f"Post {self.id} by {self.user.username}"
 
-# Model to store images for each post
+    @property
+    def likes_count(self):
+        return self.likes.count()
+
+    @property
+    def comments_count(self):
+        return self.comments.count()
+
+
+# 📷 2. PostImage model (for multiple images per Post)
 class PostImage(models.Model):
-    post = models.ForeignKey(Post, related_name='images', on_delete=models.CASCADE)
+    post = models.ForeignKey(Post, on_delete=models.CASCADE, related_name='post_images')
     image = models.ImageField(upload_to='post_images/')
-    created_at = models.DateTimeField(auto_now_add=True)
+    uploaded_at = models.DateTimeField(auto_now_add=True)
 
     def __str__(self):
-        return f"Image for post {self.post.id}"
+        return f"Image {self.id} for Post {self.post.id}"
 
-# Model to store likes on posts
-class Like(models.Model):
-    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE)  # Use the custom user model
-    post = models.ForeignKey(Post, related_name='likes', on_delete=models.CASCADE)
-    created_at = models.DateTimeField(auto_now_add=True)
 
-    def __str__(self):
-        return f"{self.user.username} liked {self.post.content[:20]}"
-
-# Model to store comments on posts
+# 💬 3. Comment model
 class Comment(models.Model):
-    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE)  # Use the custom user model
-    post = models.ForeignKey(Post, related_name='comments', on_delete=models.CASCADE)
-    content = models.TextField()
+    post = models.ForeignKey(Post, on_delete=models.CASCADE, related_name='comments')
+    user = models.ForeignKey(User, on_delete=models.CASCADE)
+    text = models.TextField()
     created_at = models.DateTimeField(auto_now_add=True)
 
     def __str__(self):
-        return f"{self.user.username}: {self.content[:20]}"
+        return f"Comment {self.id} by {self.user.username} on Post {self.post.id}"

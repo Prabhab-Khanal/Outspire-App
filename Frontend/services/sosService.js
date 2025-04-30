@@ -17,23 +17,4 @@ export const sendSOS = async (sosData) => {
   return response.data;
 };
 
-// GET CONTACTS
-export const getEmergencyContacts = async () => {
-  const headers = await getAuthHeaders();
-  const response = await API.get('/sos/emergency-contacts/', { headers });
-  return response.data;
-};
 
-// ADD CONTACT
-export const addEmergencyContact = async (data) => {
-  const headers = await getAuthHeaders();
-  const response = await API.post('/sos/emergency-contacts/', data, { headers });
-  return response.data;
-};
-
-// DELETE CONTACT
-export const deleteEmergencyContact = async (id) => {
-  const headers = await getAuthHeaders();
-  const response = await API.delete(`/sos/emergency-contacts/${id}/`, { headers });
-  return response.data;
-};

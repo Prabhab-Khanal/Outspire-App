@@ -1,6 +1,6 @@
 from django.urls import re_path
-from . import consumers
+from .consumers import CommunityConsumer
 
 websocket_urlpatterns = [
-    re_path(r'ws/community/', consumers.PostConsumer.as_asgi()),
+    re_path(r'ws/community/$', CommunityConsumer.as_asgi()),
 ]

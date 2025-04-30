@@ -1,55 +1,46 @@
 import React, { useState, useEffect } from 'react';
 import {
-  View, Text, TextInput, Button, StyleSheet, ScrollView, Alert,
-  Image, TouchableOpacity, Modal, StatusBar
+  View, Text, TextInput, Button, ScrollView, Alert,
+  Image, TouchableOpacity, Modal, StyleSheet, StatusBar, FlatList
 } from 'react-native';
 import MapView, { Marker, Polyline, UrlTile } from 'react-native-maps';
 import * as ImagePicker from 'expo-image-picker';
 import axios from 'axios';
 import { FontAwesome } from '@expo/vector-icons';
-
-const haversineDistance = (coords) => {
-  const R = 6371;
-  let distance = 0;
-  for (let i = 1; i < coords.length; i++) {
-    const lat1 = coords[i - 1].latitude * Math.PI / 180;
-    const lon1 = coords[i - 1].longitude * Math.PI / 180;
-    const lat2 = coords[i].latitude * Math.PI / 180;
-    const lon2 = coords[i].longitude * Math.PI / 180;
-    const dlat = lat2 - lat1;
-    const dlon = lon2 - lon1;
-    const a = Math.sin(dlat / 2) ** 2 +
-      Math.cos(lat1) * Math.cos(lat2) * Math.sin(dlon / 2) ** 2;
-    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-    distance += R * c;
-  }
-  return distance.toFixed(2);
-};
+import { createTrail } from '../../services/trailService'; // adjust path if needed
+import * as uuid from 'uuid';
+const trailTypes = ['Hiking', 'Cycling', 'Trekking'];
 
 export default function AddTrailScreen() {
+  const [trailType, setTrailType] = useState('');
   const [name, setName] = useState('');
   const [location, setLocation] = useState('');
-  const [image, setImage] = useState(null);
-  const [rawPoints, setRawPoints] = useState([]);
-  const [trailSegments, setTrailSegments] = useState([]);
+  const [trailImages, setTrailImages] = useState([]);
   const [mapType, setMapType] = useState('standard');
   const [routingEnabled, setRoutingEnabled] = useState(true);
-  const [difficulty, setDifficulty] = useState('');
-  const [description, setDescription] = useState('');
-  const [checklist, setChecklist] = useState('');
-  const [distance, setDistance] = useState(0);
-  const [altitude, setAltitude] = useState(0);
+
+  const [rawPoints, setRawPoints] = useState([]);
+  const [trailSegments, setTrailSegments] = useState([]);
 
   const [modalVisible, setModalVisible] = useState(false);
   const [newPoint, setNewPoint] = useState(null);
   const [pointName, setPointName] = useState('');
-  const [pointImage, setPointImage] = useState(null);
+  const [pointDescription, setPointDescription] = useState('');
+  const [pointImages, setPointImages] = useState([]);
+  const [editingIndex, setEditingIndex] = useState(null);
+
+  const [difficulty, setDifficulty] = useState('');
+  const [description, setDescription] = useState('');
+  const [checklist, setChecklist] = useState([{ key: '', value: '' }]);
+
+  const [distance, setDistance] = useState(0);
+  const [altitude, setAltitude] = useState(0);
 
   useEffect(() => {
     (async () => {
       const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
       if (status !== 'granted') {
-        Alert.alert('Permission needed', 'Camera roll permission is required to pick an image.');
+        Alert.alert('Permission needed', 'Camera roll permission is required.');
       }
     })();
   }, []);
@@ -64,725 +55,497 @@ export default function AddTrailScreen() {
       setAltitude(0);
     }
   }, [trailSegments]);
+  const haversineDistance = (coords) => {
+    const R = 6371;
+    let d = 0;
+    for (let i = 1; i < coords.length; i++) {
+      const lat1 = coords[i - 1].latitude * Math.PI / 180;
+      const lon1 = coords[i - 1].longitude * Math.PI / 180;
+      const lat2 = coords[i].latitude * Math.PI / 180;
+      const lon2 = coords[i].longitude * Math.PI / 180;
+      const dlat = lat2 - lat1;
+      const dlon = lon2 - lon1;
+      const a = Math.sin(dlat/2)**2 + Math.cos(lat1)*Math.cos(lat2)*Math.sin(dlon/2)**2;
+      const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+      d += R * c;
+    }
+    return d.toFixed(2);
+  };
 
-  const fetchMaxAltitude = async (allPoints) => {
+  const fetchMaxAltitude = async (points) => {
     try {
-      let maxElevation = 0;
-  
-      for (const seg of trailSegments) {
-        const points = seg.points;
-        if (!points || points.length < 2) continue;
-  
-        let sampled = [];
-  
-        if (points.length > 100) {
-          const forty = Math.floor(points.length * 0.4);
-          const twenty = 20;
-  
-          const first40 = points.slice(0, forty);
-          const last40 = points.slice(points.length - forty);
-          const middle20 = [];
-  
-          const step = Math.floor((points.length - 2 * forty) / twenty);
-          for (let i = 0; i < twenty; i++) {
-            const idx = forty + i * step;
-            if (idx < points.length - forty) {
-              middle20.push(points[idx]);
-            }
-          }
-  
-          sampled = [...first40, ...middle20, ...last40];
-        } else {
-          sampled = points;
-        }
-  
-        // Break the sampled points into batches of 100 or fewer
-        const chunkSize = 100;
-        const chunks = [];
-        for (let i = 0; i < sampled.length; i += chunkSize) {
-          chunks.push(sampled.slice(i, i + chunkSize));
-        }
-  
-        // Now make API calls for each chunk
-        for (const chunk of chunks) {
-          const locationString = chunk.map(p => `${p.latitude},${p.longitude}`).join('|');
-  
-          // Log the location string before sending the request to check if it's valid
-          console.log('Sending batch location string:', locationString);
-  
-          const res = await axios.get(`https://api.opentopodata.org/v1/srtm90m?locations=${locationString}`);
-  
-          // Log the response to see what we get
-          console.log('Elevation API response:', res.data);
-  
-          if (res.data && res.data.results) {
-            const elevations = res.data.results.map(p => p.elevation);
-            const highest = Math.max(...elevations);
-            maxElevation = Math.max(maxElevation, highest);
-          } else {
-            console.log('Elevation data is empty or invalid:', res.data);
-          }
-        }
+      if (points.length === 0) return;
+      const samplePoints = sampleArray(points, 15);
+      const batch = samplePoints.map(p => `${p.latitude},${p.longitude}`).join('|');
+      const res = await axios.get(`https://api.opentopodata.org/v1/srtm90m?locations=${batch}`);
+      if (res.data?.results) {
+        const elevations = res.data.results.map(r => r.elevation);
+        setAltitude(Math.max(...elevations));
       }
-  
-      setAltitude(maxElevation.toFixed(2));
-    } catch (error) {
-      console.error('Elevation Error:', error.response?.data || error.message);
-      setAltitude(0);
+    } catch (err) {
+      console.error(err);
     }
   };
-  
-  
+
+  const sampleArray = (arr, n) => {
+    if (arr.length <= n) return arr;
+    const step = Math.floor(arr.length / n);
+    return arr.filter((_, idx) => idx % step === 0);
+  };
 
   const getSnappedSegment = async (from, to) => {
     try {
+      const profile = getRoutingProfile(trailType); // use the helper
+  
+      
+  
+      const url = `https://api.openrouteservice.org/v2/directions/${profile}/geojson`;
+      console.log('url: ',url )
       const res = await axios.post(
-        'https://api.openrouteservice.org/v2/directions/foot-hiking/geojson',
+        url,
         { coordinates: [[from.longitude, from.latitude], [to.longitude, to.latitude]] },
-        {
-          headers: {
-            'Authorization': '5b3ce3597851110001cf624884a7a29e58794c439ea23d6003c19bab',
-            'Content-Type': 'application/json',
-          },
-        }
+        { headers: { Authorization: '5b3ce3597851110001cf624884a7a29e58794c439ea23d6003c19bab', 'Content-Type': 'application/json' } }
       );
-      return res.data.features[0].geometry.coordinates.map(([lng, lat]) => ({
-        latitude: lat,
-        longitude: lng,
-      }));
-    } catch (error) {
-      console.error('ORS Snap Error:', error.response?.data || error.message);
+      return res.data.features[0].geometry.coordinates.map(([lng, lat]) => ({ latitude: lat, longitude: lng }));
+    } catch (err) {
+      console.error(err);
       return [from, to];
     }
   };
+  
 
-  const handlePointSubmit = async () => {
-    const pointData = {
-      latitude: newPoint.latitude,
-      longitude: newPoint.longitude,
-      name: pointName || null,
-      image: pointImage || null,
-    };
-
-    const updatedRaw = [...rawPoints, pointData];
-    setRawPoints(updatedRaw);
-    setModalVisible(false);
-    setPointName('');
-    setPointImage(null);
-
-    if (updatedRaw.length < 2) return;
-    const from = updatedRaw[updatedRaw.length - 2];
-    const to = updatedRaw[updatedRaw.length - 1];
-
-    if (routingEnabled) {
-      const segment = await getSnappedSegment(from, to);
-      setTrailSegments(prev => [...prev, { routed: true, points: segment }]);
-    } else {
-      setTrailSegments(prev => [...prev, { routed: false, points: [from, to] }]);
+  const pickTrailImages = async () => {
+    const result = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ImagePicker.MediaTypeOptions.Images, allowsMultipleSelection: true });
+    if (!result.canceled && result.assets?.length) {
+      setTrailImages(prev => [...prev, ...result.assets.map(file => file.uri)]);
     }
   };
 
-  const addTrailPoint = (e) => {
-    setNewPoint(e.nativeEvent.coordinate);
+  const removeTrailImage = (index) => {
+    const updated = [...trailImages];
+    updated.splice(index, 1);
+    setTrailImages(updated);
+  };
+
+  const pickPointImages = async () => {
+    const result = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ImagePicker.MediaTypeOptions.Images, allowsMultipleSelection: true });
+    if (!result.canceled && result.assets?.length) {
+      setPointImages(prev => [...prev, ...result.assets.map(file => file.uri)]);
+    }
+  };
+
+  const removePointImage = (index) => {
+    const updated = [...pointImages];
+    updated.splice(index, 1);
+    setPointImages(updated);
+  };
+  const handleMapPress = (e) => {
+    const { latitude, longitude } = e.nativeEvent.coordinate;
+    setNewPoint({ latitude, longitude });
+    setEditingIndex(null);
     setModalVisible(true);
   };
 
-  const pickPointImage = async () => {
-    const result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ImagePicker.MediaTypeOptions.Images,
-      allowsEditing: true,
-      aspect: [4, 3],
-      quality: 1,
-    });
-    if (!result.canceled && result.assets?.length) {
-      setPointImage(result.assets[0].uri);
+  const handleMarkerPress = (e, idx) => {
+    const p = rawPoints[idx];
+    setNewPoint({ latitude: p.latitude, longitude: p.longitude });
+    setPointName(p.name || '');
+    setPointDescription(p.description || '');
+    setPointImages(p.images || []);
+    setEditingIndex(idx);
+    setModalVisible(true);
+  };
+
+  const handleMarkerLongPress = (e, idx) => {
+    const { latitude, longitude } = e.nativeEvent.coordinate;
+    const updated = [...rawPoints];
+    updated[idx] = { ...updated[idx], latitude, longitude };
+    setRawPoints(updated);
+    rebuildSegments(updated);
+  };
+
+  const handlePointSubmit = async () => {
+    if (editingIndex !== null) {
+      const updated = [...rawPoints];
+      updated[editingIndex] = {
+        ...updated[editingIndex],
+        latitude: newPoint.latitude,
+        longitude: newPoint.longitude,
+        name: pointName,
+        description: pointDescription,
+        images: pointImages,
+      };
+      setRawPoints(updated);
+      rebuildSegments(updated);
+    } else {
+      const newP = { latitude: newPoint.latitude, longitude: newPoint.longitude, name: pointName, description: pointDescription, images: pointImages };
+      const updated = [...rawPoints, newP];
+      setRawPoints(updated);
+      if (updated.length >= 2) {
+        const from = updated[updated.length - 2];
+        const to = updated[updated.length - 1];
+        if (routingEnabled) {
+          const seg = await getSnappedSegment(from, to);
+          setTrailSegments(prev => [...prev, { routed: true, points: seg }]);
+        } else {
+          setTrailSegments(prev => [...prev, { routed: false, points: [from, to] }]);
+        }
+      }
     }
+    setModalVisible(false);
+    setPointName('');
+    setPointDescription('');
+    setPointImages([]);
+  };
+
+  const rebuildSegments = async (points) => {
+    const newSegments = [];
+    for (let i = 1; i < points.length; i++) {
+      const from = points[i - 1];
+      const to = points[i];
+      if (routingEnabled) {
+        const seg = await getSnappedSegment(from, to);
+        newSegments.push({ routed: true, points: seg });
+      } else {
+        newSegments.push({ routed: false, points: [from, to] });
+      }
+    }
+    setTrailSegments(newSegments);
   };
 
   const undoLastPoint = () => {
-    if (rawPoints.length === 0 || trailSegments.length === 0) return;
-    setRawPoints(rawPoints.slice(0, -1));
-    setTrailSegments(trailSegments.slice(0, -1));
-  };
-
-  const pickImage = async () => {
-    const result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ImagePicker.MediaTypeOptions.Images,
-      allowsEditing: true,
-      aspect: [4, 3],
-      quality: 1,
-    });
-    if (!result.canceled && result.assets?.length) {
-      setImage(result.assets[0].uri);
-    }
-  };
-
-  const toggleMapType = () => {
-    setMapType(prev => (prev === 'standard' ? 'satellite' : prev === 'satellite' ? 'hybrid' : 'standard'));
-  };
-
-  const toggleRouting = () => {
-    setRoutingEnabled(!routingEnabled);
-    Alert.alert('Routing mode changed. New points will follow the new mode.');
-  };
-
-  const handleAddTrail = () => {
-    const allPoints = trailSegments.flatMap(seg => seg.points);
-    if (!name || !location || !image || allPoints.length < 2 || !difficulty || !description) {
-      Alert.alert('Error', 'Please complete all fields and add at least two points.');
+    if (rawPoints.length === 0) {
+      Alert.alert('No Points', 'There are no points to undo.');
       return;
     }
-
-    const trailData = {
-      name,
-      location,
-      image,
-      trailSegments,
-      rawPoints,
-      distance_km: distance,
-      highest_altitude: altitude,
-      difficulty,
-      description,
-      checklist: checklist.split(',').map(i => i.trim()),
-    };
-
-    console.log('Trail Data:', trailData);
-    Alert.alert('Trail submitted. Check console for data.');
+  
+    const updatedRawPoints = [...rawPoints];
+    updatedRawPoints.pop(); // remove the last point
+    setRawPoints(updatedRawPoints);
+  
+    // Rebuild all segments again with the remaining points
+    rebuildSegments(updatedRawPoints);
   };
+  
+  const handleMarkerDragEnd = async (e, idx) => {
+    const { latitude, longitude } = e.nativeEvent.coordinate;
+    const updatedPoints = [...rawPoints];
+    updatedPoints[idx] = { ...updatedPoints[idx], latitude, longitude };
+    setRawPoints(updatedPoints);
+    await rebuildSegments(updatedPoints);
+  };
+  
+  const uploadImage = async (uri) => {
+    const formData = new FormData();
+    formData.append('file', {
+      uri,
+      type: 'image/jpeg', 
+      name: `photo_${Date.now()}.jpg`,
+    });
+  
+    const response = await axios.post('http://your-backend-url/api/upload/', formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    });
+  
+    return response.data.url; // backend should return uploaded URL
+  };
+  
+  const uploadMultipleImages = async (uris) => {
+    const uploadedUrls = [];
+    for (let uri of uris) {
+      const url = await uploadImage(uri);
+      uploadedUrls.push(url);
+    }
+    return uploadedUrls;
+  };
+  
+  const uriToBlob = async (uri) => {
+    const response = await fetch(uri);
+    const blob = await response.blob();
+    return blob;
+  };
+  
 
-  const allTrailPoints = trailSegments.flatMap(seg => seg.points);
+  const handleSaveTrail = async () => {
+    try {
+      const formData = new FormData();
+  
+      // 1. Basic fields
+      formData.append('type', trailType);
+      formData.append('name', name);
+      formData.append('location', location);
+      formData.append('difficulty', difficulty);
+      formData.append('description', description);
+      formData.append('distance_km', parseFloat(distance));
+      formData.append('highest_altitude', altitude);
+  
+      // 2. Checklist
+      formData.append('checklist', JSON.stringify(checklist.filter(item => item.key && item.value)));
+  
+      // 3. Upload Trail Images
+      for (let i = 0; i < trailImages.length; i++) {
+        const uri = trailImages[i];
+        const filename = `trail_${Date.now()}_${i}.jpg`;
+        formData.append('trail_images', {
+          uri,
+          name: filename,
+          type: 'image/jpeg',
+        });
+      }
+  
+      // 4. Upload Waypoints and their Images
+      const rawPointsWithImageNames = [];
+  
+      for (let idx = 0; idx < rawPoints.length; idx++) {
+        const point = rawPoints[idx];
+        const updatedPoint = {
+          latitude: point.latitude,
+          longitude: point.longitude,
+          name: point.name || '',
+          description: point.description || '',
+          images: [],
+        };
+  
+        for (let j = 0; j < (point.images || []).length; j++) {
+          const uri = point.images[j];
+          const randomNum = Math.floor(Math.random() * 1000000);
+          const filename = `waypoint_${Date.now()}_${randomNum}.jpg`;
+  
+          formData.append('waypoint_images', {
+            uri,
+            name: filename,
+            type: 'image/jpeg',
+          });
+  
+          updatedPoint.images.push(filename);
+        }
+  
+        rawPointsWithImageNames.push(updatedPoint);
+      }
+  
+      // Attach rawPoints
+      formData.append('rawPoints', JSON.stringify(rawPointsWithImageNames));
+  
+      // 5. Trail Segments
+      formData.append('trailSegments', JSON.stringify(trailSegments));
+  
+      console.log('✅ FormData ready');
+  
+      // 6. Upload
+      const response = await createTrail(formData);
+  
+      console.log('Trail Created:', response);
+      Alert.alert('Success', 'Trail created successfully!');
+    } catch (error) {
+      console.error('Failed to save trail:', error);
+      Alert.alert('Error', 'Trail creation failed.');
+    }
+  };
+  
+  
+  
+  
 
-  const difficultyLevels = ['Easy', 'Moderate', 'Hard', 'Expert'];
-
+  const getRoutingProfile = (type) => {
+    if (type === 'Cycling') return 'cycling-regular';
+    if (type === 'Trekking') return 'foot-walking';
+    return 'foot-hiking'; // default for Hiking
+  };
+  
   return (
     <ScrollView style={styles.container}>
-      <StatusBar barStyle="light-content" />
-      <View style={styles.headerContainer}>
-        <Text style={styles.header}>Create New Trail</Text>
-      </View>
-      
-      <View style={styles.section}>
-        <Text style={styles.sectionTitle}>Basic Information</Text>
-        <View style={styles.inputContainer}>
-          <FontAwesome name="map-signs" size={20} color="#3a7758" style={styles.inputIcon} />
-          <TextInput 
-            style={styles.input} 
-            placeholder="Trail Name" 
-            value={name} 
-            onChangeText={setName}
-            placeholderTextColor="#999" 
-          />
-        </View>
-        
-        <View style={styles.inputContainer}>
-          <FontAwesome name="map-marker" size={20} color="#3a7758" style={styles.inputIcon} />
-          <TextInput 
-            style={styles.input} 
-            placeholder="Location" 
-            value={location} 
-            onChangeText={setLocation} 
-            placeholderTextColor="#999"
-          />
-        </View>
-        
-        <TouchableOpacity style={styles.imagePickerButton} onPress={pickImage}>
-          <FontAwesome name="camera" size={18} color="#fff" />
-          <Text style={styles.imagePickerText}>Select Trail Image</Text>
-        </TouchableOpacity>
-        
-        {image && (
-          <View style={styles.imagePreviewContainer}>
-            <Image source={{ uri: image }} style={styles.selectedImage} />
-          </View>
-        )}
-      </View>
-      
-      <View style={styles.section}>
-        <Text style={styles.sectionTitle}>Map Controls</Text>
-        <View style={styles.toggleRow}>
-          <TouchableOpacity 
-            style={[styles.toggleBtn, { backgroundColor: '#3a7758' }]} 
-            onPress={toggleMapType}
+      <StatusBar barStyle="dark-content" />
+      <Text style={styles.header}>Create Trail</Text>
+  
+      {/* Trail Type Selector */}
+      <Text style={styles.label}>Select Trail Type:</Text>
+      <View style={styles.row}>
+        {trailTypes.map((type) => (
+          <TouchableOpacity
+            key={type}
+            style={[styles.typeButton, trailType === type && styles.typeButtonSelected]}
+            onPress={() => {
+              setTrailType(type);
+              console.log(`Routing profile selected: ${getRoutingProfile(type)}`);
+            }}
           >
-            <FontAwesome name="map" size={16} color="#fff" style={styles.buttonIcon} />
-            <Text style={styles.toggleText}>Map: {mapType}</Text>
+            <Text style={styles.typeButtonText}>{type}</Text>
           </TouchableOpacity>
-          
-          <TouchableOpacity 
-            style={[styles.toggleBtn, { backgroundColor: routingEnabled ? '#3a7758' : '#999' }]} 
-            onPress={toggleRouting}
-          >
-            <FontAwesome name="road" size={16} color="#fff" style={styles.buttonIcon} />
-            <Text style={styles.toggleText}>Routing: {routingEnabled ? 'ON' : 'OFF'}</Text>
-          </TouchableOpacity>
-        </View>
+        ))}
       </View>
-      
-      <View style={styles.mapContainer}>
-        <View style={styles.mapLabelContainer}>
-          <FontAwesome name="map-pin" size={16} color="#3a7758" />
-          <Text style={styles.mapLabel}>Tap on map to add trail points</Text>
-        </View>
-        
-        <MapView
-          style={styles.map}
-          mapType={mapType}
-          initialRegion={{ latitude: 27.7172, longitude: 85.324, latitudeDelta: 0.5, longitudeDelta: 0.5 }}
-          onPress={addTrailPoint}
-          showsUserLocation={true}
-          showsCompass={true}
-          showsScale={true}
-        >
-          <UrlTile urlTemplate="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" maximumZ={19} tileSize={256} />
-          {rawPoints.map((point, idx) => (
-            <Marker
-              key={idx}
-              coordinate={{ latitude: point.latitude, longitude: point.longitude }}
-              title={point.name || `Point ${idx + 1}`}
-              description={point.image ? "Image attached" : undefined}
-              pinColor="#3a7758"
-            >
-              <View style={styles.customMarker}>
-                <Text style={styles.markerText}>{idx + 1}</Text>
-              </View>
-            </Marker>
-          ))}
-          {trailSegments.map((seg, idx) => (
-            <Polyline
-              key={idx}
-              coordinates={seg.points}
-              strokeWidth={4}
-              strokeColor={seg.routed ? '#3a7758' : '#e74c3c'}
-              lineDashPattern={seg.routed ? undefined : [6, 6]}
-            />
-          ))}
-        </MapView>
-        
-        <TouchableOpacity style={styles.undoButton} onPress={undoLastPoint} disabled={rawPoints.length === 0}>
-          <FontAwesome name="undo" size={18} color={rawPoints.length === 0 ? "#ccc" : "#fff"} />
-          <Text style={[styles.undoButtonText, {color: rawPoints.length === 0 ? "#ccc" : "#fff"}]}>Undo Last Point</Text>
-        </TouchableOpacity>
-      </View>
-      
-      <View style={styles.section}>
-        <Text style={styles.sectionTitle}>Trail Details</Text>
-        
-        <View style={styles.statsContainer}>
-          <View style={styles.statItem}>
-            <FontAwesome name="road" size={18} color="#3a7758" />
-            <Text style={styles.statLabel}>Distance:</Text>
-            <Text style={styles.statValue}>{distance} km</Text>
-          </View>
-          
-          <View style={styles.statItem}>
-            <FontAwesome name="mountain" size={18} color="#3a7758" />
-            <Text style={styles.statLabel}>Elevation:</Text>
-            <Text style={styles.statValue}>{altitude}</Text>
-          </View>
-        </View>
-        
-        <Text style={styles.inputLabel}>Difficulty Level</Text>
-        <View style={styles.difficultyContainer}>
-          {difficultyLevels.map(level => (
-            <TouchableOpacity 
-              key={level}
-              style={[ 
-                styles.difficultyBtn,
-                difficulty === level && styles.difficultyBtnActive 
-              ]}
-              onPress={() => setDifficulty(level)}
-            >
-              <Text 
-                style={[ 
-                  styles.difficultyText,
-                  difficulty === level && styles.difficultyTextActive 
-                ]}
-              >
-                {level}
-              </Text>
+
+  
+      {/* Name & Location */}
+      <TextInput style={styles.input} placeholder="Trail Name" value={name} onChangeText={setName} />
+      <TextInput style={styles.input} placeholder="Location" value={location} onChangeText={setLocation} />
+  
+      {/* Trail Images */}
+      <TouchableOpacity style={styles.button} onPress={pickTrailImages}>
+        <Text style={styles.buttonText}>Pick Trail Images</Text>
+      </TouchableOpacity>
+      <View style={styles.imageContainer}>
+        {trailImages.map((img, idx) => (
+          <View key={idx} style={styles.imageWrapper}>
+            <Image source={{ uri: img }} style={styles.image} />
+            <TouchableOpacity style={styles.removeIcon} onPress={() => removeTrailImage(idx)}>
+              <FontAwesome name="close" size={20} color="#fff" />
             </TouchableOpacity>
-          ))}
-        </View>
-        
-        <Text style={styles.inputLabel}>Description</Text>
-        <TextInput 
-          style={[styles.input, styles.textArea]} 
-          placeholder="Describe the trail, terrain, views, etc." 
-          value={description} 
-          onChangeText={setDescription} 
-          multiline 
-          numberOfLines={4}
-          placeholderTextColor="#999"
-        />
-        
-        <Text style={styles.inputLabel}>Checklist <Text style={styles.inputSubLabel}>(comma separated)</Text></Text>
-        <TextInput 
-          style={styles.input} 
-          placeholder="Water, snacks, boots, sun hat..." 
-          value={checklist} 
-          onChangeText={setChecklist}
-          placeholderTextColor="#999"
-        />
+          </View>
+        ))}
       </View>
-      
-      <TouchableOpacity style={styles.submitButton} onPress={handleAddTrail}>
-        <FontAwesome name="check-circle" size={20} color="#fff" style={styles.buttonIcon} />
+  
+      {/* Map Mode & Routing Toggle */}
+      <View style={styles.toggleContainer}>
+        <Button title={`Map Mode: ${mapType}`} onPress={() => setMapType(prev => (prev === 'standard' ? 'hybrid' : 'standard'))} />
+        <Button title={`Routing: ${routingEnabled ? 'ON' : 'OFF'}`} onPress={() => setRoutingEnabled(!routingEnabled)} />
+      </View>
+  
+      {/* Map View */}
+      <MapView
+        style={styles.map}
+        mapType={mapType}
+        initialRegion={{ latitude: 27.7172, longitude: 85.324, latitudeDelta: 0.5, longitudeDelta: 0.5 }}
+        onPress={handleMapPress}
+      >
+        <UrlTile urlTemplate="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
+        {rawPoints.map((point, idx) => (
+          <Marker
+            key={idx}
+            coordinate={{ latitude: point.latitude, longitude: point.longitude }}
+            title={point.name || `Point ${idx + 1}`}
+            description={point.description || ''}
+            draggable
+            onDragEnd={(e) => handleMarkerDragEnd(e, idx)}
+            onPress={(e) => handleMarkerPress(e, idx)}
+          />
+        ))}
+        {trailSegments.map((seg, idx) => (
+          <Polyline key={idx} coordinates={seg.points} strokeColor={seg.routed ? 'green' : 'red'} strokeWidth={3} />
+        ))}
+      </MapView>
+      <Button title="Undo Last Point" onPress={undoLastPoint} />
+
+      {/* Distance and Elevation */}
+      <Text style={styles.summaryText}>Distance: {distance} km | Max Elevation: {altitude} m</Text>
+  
+      {/* Difficulty */}
+      <Text style={styles.label}>Select Difficulty:</Text>
+      <View style={styles.row}>
+        {['Easy', 'Moderate', 'Hard', 'Expert'].map((level) => (
+          <TouchableOpacity
+            key={level}
+            style={[styles.difficultyButton, difficulty === level && styles.typeButtonSelected]}
+            onPress={() => setDifficulty(level)}
+          >
+            <Text style={styles.typeButtonText}>{level}</Text>
+          </TouchableOpacity>
+        ))}
+      </View>
+  
+      {/* Trail Description */}
+      <TextInput
+        style={[styles.input, { height: 100 }]}
+        placeholder="Trail Description"
+        value={description}
+        onChangeText={setDescription}
+        multiline
+      />
+  
+      {/* Checklist */}
+      <Text style={styles.label}>Checklist:</Text>
+      {checklist.map((item, index) => (
+        <View key={index} style={styles.checklistRow}>
+          <TextInput
+            style={[styles.input, { flex: 1, marginRight: 5 }]}
+            placeholder="Key"
+            value={item.key}
+            onChangeText={(text) => {
+              const updated = [...checklist];
+              updated[index].key = text;
+              setChecklist(updated);
+            }}
+          />
+          <TextInput
+            style={[styles.input, { flex: 1 }]}
+            placeholder="Value"
+            value={item.value}
+            onChangeText={(text) => {
+              const updated = [...checklist];
+              updated[index].value = text;
+              setChecklist(updated);
+            }}
+          />
+        </View>
+      ))}
+      <Button title="Add More Checklist Item" onPress={() => setChecklist([...checklist, { key: '', value: '' }])} />
+  
+      {/* Save Trail */}
+      <TouchableOpacity style={styles.submitButton} onPress={handleSaveTrail}>
         <Text style={styles.submitButtonText}>Save Trail</Text>
       </TouchableOpacity>
   
-      <Modal visible={modalVisible} transparent animationType="slide">
+      {/* Point Modal */}
+      <Modal visible={modalVisible} transparent>
         <View style={styles.modalContainer}>
           <View style={styles.modalContent}>
-            <View style={styles.modalHeader}>
-              <Text style={styles.modalTitle}>Add Waypoint</Text>
-              <TouchableOpacity onPress={() => setModalVisible(false)}>
-                <FontAwesome name="times-circle" size={24} color="#3a7758" />
-              </TouchableOpacity>
-            </View>
-            
-            <View style={styles.inputContainer}>
-              <FontAwesome name="tag" size={20} color="#3a7758" style={styles.inputIcon} />
-              <TextInput
-                style={styles.input}
-                placeholder="Waypoint Name (optional)"
-                value={pointName}
-                onChangeText={setPointName}
-                placeholderTextColor="#999"
-              />
-            </View>
-            
-            <TouchableOpacity style={styles.imagePickerButton} onPress={pickPointImage}>
-              <FontAwesome name="camera" size={18} color="#fff" />
-              <Text style={styles.imagePickerText}>Add Photo to Waypoint</Text>
+            <TextInput style={styles.input} placeholder="Waypoint Name" value={pointName} onChangeText={setPointName} />
+            <TextInput
+              style={[styles.input, { height: 80 }]}
+              placeholder="Waypoint Description"
+              value={pointDescription}
+              onChangeText={setPointDescription}
+              multiline
+            />
+            <TouchableOpacity style={styles.button} onPress={pickPointImages}>
+              <Text style={styles.buttonText}>Pick Waypoint Images</Text>
             </TouchableOpacity>
-            
-            {pointImage && (
-              <View style={styles.imagePreviewContainer}>
-                <Image source={{ uri: pointImage }} style={styles.selectedImage} />
-              </View>
-            )}
-            
-            <View style={styles.modalButtons}>
-              <TouchableOpacity 
-                style={[styles.modalButton, styles.cancelButton]} 
-                onPress={() => setModalVisible(false)}
-              >
-                <Text style={styles.cancelButtonText}>Cancel</Text>
-              </TouchableOpacity>
-              
-              <TouchableOpacity 
-                style={[styles.modalButton, styles.confirmButton]} 
-                onPress={handlePointSubmit}
-              >
-                <Text style={styles.confirmButtonText}>Add Point</Text>
-              </TouchableOpacity>
+            <View style={styles.imageContainer}>
+              {pointImages.map((img, idx) => (
+                <View key={idx} style={styles.imageWrapper}>
+                  <Image source={{ uri: img }} style={styles.image} />
+                  <TouchableOpacity style={styles.removeIcon} onPress={() => removePointImage(idx)}>
+                    <FontAwesome name="close" size={20} color="#fff" />
+                  </TouchableOpacity>
+                </View>
+              ))}
             </View>
+            <Button title="Save Waypoint" onPress={handlePointSubmit} />
+            <Button title="Cancel" onPress={() => setModalVisible(false)} color="#aaa" />
           </View>
         </View>
       </Modal>
     </ScrollView>
   );
-  
 }
+  const styles = StyleSheet.create({
+    container: { flex: 1, padding: 10, backgroundColor: '#f5f5f5' },
+    header: { fontSize: 24, fontWeight: 'bold', marginBottom: 15, textAlign: 'center' },
+    label: { fontSize: 16, fontWeight: '600', marginVertical: 10 },
+    input: { backgroundColor: '#fff', padding: 10, borderRadius: 8, marginBottom: 10 },
+    button: { backgroundColor: '#3a7758', padding: 12, borderRadius: 8, alignItems: 'center', marginBottom: 10 },
+    buttonText: { color: '#fff', fontWeight: 'bold' },
+    imageContainer: { flexDirection: 'row', flexWrap: 'wrap' },
+    imageWrapper: { position: 'relative', margin: 5 },
+    image: { width: 100, height: 100, borderRadius: 8 },
+    removeIcon: { position: 'absolute', top: -5, right: -5, backgroundColor: '#f00', borderRadius: 15, padding: 2 },
+    row: { flexDirection: 'row', flexWrap: 'wrap', marginBottom: 10 },
+    typeButton: { backgroundColor: '#ccc', padding: 10, borderRadius: 8, marginRight: 8, marginBottom: 8 },
+    typeButtonSelected: { backgroundColor: '#3a7758' },
+    typeButtonText: { color: '#fff', fontWeight: 'bold' },
+    difficultyButton: { backgroundColor: '#888', padding: 10, borderRadius: 8, marginRight: 8, marginBottom: 8 },
+    toggleContainer: { flexDirection: 'row', justifyContent: 'space-between', marginVertical: 10 },
+    map: { height: 300, marginVertical: 10 },
+    summaryText: { fontSize: 16, textAlign: 'center', marginVertical: 10 },
+    checklistRow: { flexDirection: 'row', marginBottom: 10 },
+    submitButton: { backgroundColor: '#3a7758', padding: 15, borderRadius: 8, marginVertical: 15, alignItems: 'center' },
+    submitButtonText: { color: '#fff', fontSize: 18, fontWeight: 'bold' },
+    modalContainer: { flex: 1, justifyContent: 'center', backgroundColor: 'rgba(0,0,0,0.5)' },
+    modalContent: { backgroundColor: '#fff', padding: 20, borderRadius: 10, margin: 20 },
+    
 
+    });
+    
+  
 
-
-const styles = StyleSheet.create({
-  container: { 
-    flex: 1, 
-    backgroundColor: '#f8f9fa' 
-  },
-  headerContainer: {
-    backgroundColor: '#3a7758',
-    paddingTop: 50,
-    paddingBottom: 20,
-    borderBottomLeftRadius: 20,
-    borderBottomRightRadius: 20,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.1,
-    shadowRadius: 8,
-    elevation: 5,
-    marginBottom: 20,
-  },
-  header: { 
-    fontSize: 28, 
-    fontWeight: 'bold', 
-    color: '#fff',
-    textAlign: 'center',
-  },
-  section: {
-    backgroundColor: '#fff',
-    borderRadius: 10,
-    padding: 15,
-    marginHorizontal: 15,
-    marginBottom: 15,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.05,
-    shadowRadius: 3.84,
-    elevation: 2,
-  },
-  sectionTitle: {
-    fontSize: 18,
-    fontWeight: 'bold',
-    color: '#3a7758',
-    marginBottom: 15,
-  },
-  inputContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    borderWidth: 1,
-    borderColor: '#e0e0e0',
-    borderRadius: 8,
-    marginBottom: 15,
-    backgroundColor: '#f9f9f9',
-  },
-  inputIcon: {
-    marginHorizontal: 10,
-  },
-  input: {
-    flex: 1,
-    padding: 12,
-    fontSize: 16,
-    color: '#333',
-  },
-  textArea: {
-    height: 100,
-    textAlignVertical: 'top',
-  },
-  inputLabel: {
-    fontSize: 16,
-    fontWeight: '500',
-    color: '#333',
-    marginBottom: 8,
-    marginTop: 5,
-  },
-  inputSubLabel: {
-    fontSize: 14,
-    fontWeight: 'normal',
-    color: '#888',
-  },
-  imagePickerButton: {
-    backgroundColor: '#3a7758',
-    borderRadius: 8,
-    padding: 12,
-    flexDirection: 'row',
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginBottom: 15,
-  },
-  imagePickerText: {
-    color: '#fff',
-    fontSize: 16,
-    fontWeight: '500',
-    marginLeft: 8,
-  },
-  imagePreviewContainer: {
-    borderRadius: 10,
-    overflow: 'hidden',
-    marginBottom: 15,
-    borderWidth: 1,
-    borderColor: '#e0e0e0',
-  },
-  selectedImage: { 
-    width: '100%', 
-    height: 200, 
-    borderRadius: 10,
-  },
-  toggleRow: { 
-    flexDirection: 'row', 
-    justifyContent: 'space-between', 
-  },
-  toggleBtn: { 
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    padding: 12, 
-    borderRadius: 8,
-    flex: 0.48,
-  },
-  buttonIcon: {
-    marginRight: 8,
-  },
-  toggleText: { 
-    color: '#fff', 
-    fontWeight: 'bold' 
-  },
-  mapContainer: {
-    backgroundColor: '#fff',
-    borderRadius: 10,
-    overflow: 'hidden',
-    marginHorizontal: 15,
-    marginBottom: 15,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.05,
-    shadowRadius: 3.84,
-    elevation: 2,
-  },
-  mapLabelContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#f9f9f9',
-    padding: 12,
-    borderBottomWidth: 1,
-    borderBottomColor: '#e0e0e0',
-  },
-  mapLabel: { 
-    fontSize: 16, 
-    fontWeight: '500', 
-    color: '#555',
-    marginLeft: 8,
-  },
-  map: { 
-    height: 400, 
-  },
-  undoButton: {
-    backgroundColor: '#888',
-    padding: 12,
-    borderRadius: 8,
-    flexDirection: 'row',
-    justifyContent: 'center',
-    alignItems: 'center',
-    margin: 10,
-  },
-  undoButtonText: {
-    color: '#fff',
-    fontWeight: '500',
-    marginLeft: 8,
-  },
-  customMarker: {
-    backgroundColor: '#3a7758',
-    borderRadius: 15,
-    width: 30,
-    height: 30,
-    justifyContent: 'center',
-    alignItems: 'center',
-    borderWidth: 2,
-    borderColor: '#fff',
-  },
-  markerText: {
-    color: '#fff',
-    fontWeight: 'bold',
-  },
-  statsContainer: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    backgroundColor: '#f9f9f9',
-    borderRadius: 8,
-    padding: 15,
-    marginBottom: 15,
-  },
-  statItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  statLabel: {
-    fontSize: 16,
-    color: '#555',
-    marginHorizontal: 5,
-  },
-  statValue: {
-    fontSize: 16,
-    fontWeight: 'bold',
-    color: '#333',
-  },
-  difficultyContainer: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    marginBottom: 15,
-  },
-  difficultyBtn: {
-    borderWidth: 1,
-    borderColor: '#3a7758',
-    borderRadius: 8,
-    padding: 10,
-    flex: 1,
-    marginHorizontal: 4,
-    alignItems: 'center',
-  },
-  difficultyBtnActive: {
-    backgroundColor: '#3a7758',
-  },
-  difficultyText: {
-    color: '#3a7758',
-    fontWeight: '500',
-  },
-  difficultyTextActive: {
-    color: '#fff',
-  },
-  submitButton: {
-    backgroundColor: '#3a7758',
-    borderRadius: 10,
-    padding: 16,
-    margin: 15,
-    flexDirection: 'row',
-    justifyContent: 'center',
-    alignItems: 'center',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.2,
-    shadowRadius: 3.84,
-    elevation: 3,
-  },
-  submitButtonText: {
-    color: '#fff',
-    fontSize: 18,
-    fontWeight: 'bold',
-    marginLeft: 8,
-  },
-  modalContainer: { 
-    flex: 1, 
-    justifyContent: 'center', 
-    alignItems: 'center', 
-    backgroundColor: 'rgba(0,0,0,0.6)' 
-  },
-  modalContent: { 
-    backgroundColor: '#fff', 
-    padding: 20, 
-    borderRadius: 15, 
-    width: '90%',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 5 },
-    shadowOpacity: 0.3,
-    shadowRadius: 8,
-    elevation: 10,
-  },
-  modalHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 20,
-  },
-  modalTitle: {
-    fontSize: 20,
-    fontWeight: 'bold',
-    color: '#3a7758',
-  },
-  modalButtons: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    marginTop: 10,
-  },
-  modalButton: {
-    borderRadius: 8,
-    padding: 12,
-    flex: 0.48,
-    alignItems: 'center',
-  },
-  cancelButton: {
-    backgroundColor: '#f1f1f1',
-  },
-  confirmButton: {
-    backgroundColor: '#3a7758',
-  },
-  cancelButtonText: {
-    color: '#666',
-    fontWeight: '500',
-  },
-  confirmButtonText: {
-    color: '#fff',
-    fontWeight: 'bold',
-  },
-});
+  
+  

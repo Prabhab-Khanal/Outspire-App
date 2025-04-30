@@ -1,8 +1,13 @@
 import API from './api';
 
 // Register User API call
-export const registerUser = (data) => {
-  return API.post('users/register/', data); // Matches '/register/'
+export const registerUser = (formData, multipart = false) => {
+  // for React Native multipart uploads, you must set this header
+  const headers = multipart
+    ? { 'Content-Type': 'multipart/form-data' }
+    : {};
+
+  return API.post('users/register/', formData, { headers });
 };
 
 // User Login API call
@@ -17,6 +22,10 @@ export const verifyOTP = (data) => {
 
 export const generateOTPForEmailVerification = (data) => {
   return API.post('users/generate-otp-for-email-verification/', data); 
+};
+
+export const resendOTP = async (data) => {
+  return API.post('/users/resend-otp/', data);
 };
 
 // Forgot Password API call
@@ -34,4 +43,16 @@ export const googleLogin = (data) => {
   return API.post('users/google-login/', data); // Matches '/google-login/'
 
 
+};
+
+export const checkUsernameEmail = (data) => {
+  return API.post('/users/check-username-email/', data);
+};
+
+export const checkPhoneNumber = (data) => {
+  return API.post('/users/check-phone-number/', data);
+};
+
+export const resetPasswordAfterOTP = (data) => {
+  return API.post('/users/reset-password-after-otp/', data);
 };

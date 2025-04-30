@@ -9,3 +9,4 @@ class SOSAlertSerializer(serializers.ModelSerializer):
         model = SOSAlert
         fields = ['id', 'latitude', 'longitude', 'place_name', 'timestamp']
         read_only_fields = ['id', 'timestamp']
+
