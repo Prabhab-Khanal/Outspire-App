@@ -1,4 +1,25 @@
+## Outspire
 
+Outspire is a full-stack social and outdoor activity platform.
+It helps people explore trails, connect with communities, chat in real time, share media, and stay safe with SOS features — all in one app.
+
+Key Features
+
+ * Trails – discover and share hiking/outdoor routes
+
+ * Chats – real-time messaging powered by Django Channels & Redis
+
+ * Community – join groups, connect, and share experiences
+
+ * SOS – send quick alerts for safety and emergencies
+
+ * Payments – integrated Khalti gateway for secure transactions
+
+ * Notifications – instant updates via web and mobile
+
+ * Cross-platform – mobile app (Expo Go), web admin (Vite), backend (Django REST + JWT auth)
+
+Outspire is designed to make outdoor exploration more connected, safe, and engaging.
 ---
 
 # How to Run
